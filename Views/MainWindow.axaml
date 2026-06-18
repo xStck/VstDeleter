@@ -1,0 +1,948 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:VstDeleter.ViewModels"
+        xmlns:models="using:VstDeleter.Models"
+        x:Class="VstDeleter.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="VST Deleter"
+        Width="820" Height="660"
+        MinWidth="680" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        Background="#0F0F14"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaTitleBarHeightHint="-1"
+        TransparencyLevelHint="AcrylicBlur">
+
+  <Window.Styles>
+
+    <!-- ═══ Kolory i zasoby ═══════════════════════════════════════════════ -->
+    <Style Selector="Window">
+      <Setter Property="FontFamily" Value="Inter,SF Pro Display,-apple-system,sans-serif"/>
+    </Style>
+
+    <!-- Etykiety sekcji -->
+    <Style Selector="TextBlock.section-label">
+      <Setter Property="FontSize"   Value="10"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="#6B6B80"/>
+      <Setter Property="LetterSpacing" Value="1.5"/>
+    </Style>
+
+    <!-- Duże przyciski akcji -->
+    <Style Selector="Button.action-btn">
+      <Setter Property="Background"   Value="#7C3AED"/>
+      <Setter Property="Foreground"   Value="White"/>
+      <Setter Property="FontSize"     Value="14"/>
+      <Setter Property="FontWeight"   Value="SemiBold"/>
+      <Setter Property="Padding"      Value="28,12"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Cursor"       Value="Hand"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+    <Style Selector="Button.action-btn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#6D28D9"/>
+    </Style>
+    <Style Selector="Button.action-btn:pressed /template/ ContentPresenter">
+      <Setter Property="Background" Value="#5B21B6"/>
+    </Style>
+
+    <!-- Przycisk destructive (usuń) -->
+    <Style Selector="Button.danger-btn">
+      <Setter Property="Background"   Value="#DC2626"/>
+      <Setter Property="Foreground"   Value="White"/>
+      <Setter Property="FontSize"     Value="14"/>
+      <Setter Property="FontWeight"   Value="SemiBold"/>
+      <Setter Property="Padding"      Value="28,12"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Cursor"       Value="Hand"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+    <Style Selector="Button.danger-btn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#B91C1C"/>
+    </Style>
+    <Style Selector="Button.danger-btn:pressed /template/ ContentPresenter">
+      <Setter Property="Background" Value="#991B1B"/>
+    </Style>
+
+    <!-- Przycisk ghost (dodatkowy) -->
+    <Style Selector="Button.ghost-btn">
+      <Setter Property="Background"      Value="Transparent"/>
+      <Setter Property="Foreground"      Value="#9CA3AF"/>
+      <Setter Property="FontSize"        Value="13"/>
+      <Setter Property="Padding"         Value="16,10"/>
+      <Setter Property="CornerRadius"    Value="8"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush"     Value="#2D2D3D"/>
+    </Style>
+    <Style Selector="Button.ghost-btn:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#1A1A2E"/>
+    </Style>
+
+    <!-- Wiersz wynikowy (FoundItem) -->
+    <Style Selector="ListBoxItem">
+      <Setter Property="Background"   Value="Transparent"/>
+      <Setter Property="Padding"      Value="0"/>
+      <Setter Property="Margin"       Value="0,2"/>
+      <Setter Property="CornerRadius" Value="8"/>
+    </Style>
+    <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent"/>
+    </Style>
+    <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#16162A"/>
+    </Style>
+
+    <!-- ScrollBar slim -->
+    <Style Selector="ScrollBar">
+      <Setter Property="AllowAutoHide" Value="True"/>
+    </Style>
+
+    <!-- TextBox search -->
+    <Style Selector="TextBox.search-box">
+      <Setter Property="Background"       Value="#18181F"/>
+      <Setter Property="Foreground"       Value="#F3F4F6"/>
+      <Setter Property="BorderBrush"      Value="#2D2D45"/>
+      <Setter Property="BorderThickness"  Value="1.5"/>
+      <Setter Property="CornerRadius"     Value="12"/>
+      <Setter Property="FontSize"         Value="17"/>
+      <Setter Property="Padding"          Value="18,14"/>
+      <Setter Property="CaretBrush"       Value="#A78BFA"/>
+    </Style>
+    <Style Selector="TextBox.search-box:focus">
+      <Setter Property="BorderBrush" Value="#7C3AED"/>
+    </Style>
+
+    <!-- Checkbox -->
+    <Style Selector="CheckBox">
+      <Setter Property="Foreground" Value="#D1D5DB"/>
+      <Setter Property="FontSize"   Value="13"/>
+    </Style>
+
+  </Window.Styles>
+
+  <!-- Tło okna z gradientem -->
+  <Panel>
+
+    <!-- Gradient dekoracyjny u góry -->
+    <Border VerticalAlignment="Top" Height="280" IsHitTestVisible="False">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+          <GradientStop Color="#0D0B1A" Offset="0"/>
+          <GradientStop Color="#120E24" Offset="0.5"/>
+          <GradientStop Color="#0F0F14" Offset="1"/>
+        </LinearGradientBrush>
+      </Border.Background>
+    </Border>
+
+    <!-- Świecące okręgi dekoracyjne -->
+    <Ellipse Width="400" Height="400"
+             HorizontalAlignment="Left" VerticalAlignment="Top"
+             Margin="-100,-100,0,0"
+             Opacity="0.04" IsHitTestVisible="False">
+      <Ellipse.Fill>
+        <RadialGradientBrush>
+          <GradientStop Color="#7C3AED" Offset="0"/>
+          <GradientStop Color="Transparent" Offset="1"/>
+        </RadialGradientBrush>
+      </Ellipse.Fill>
+    </Ellipse>
+    <Ellipse Width="300" Height="300"
+             HorizontalAlignment="Right" VerticalAlignment="Top"
+             Margin="0,-50,-50,0"
+             Opacity="0.03" IsHitTestVisible="False">
+      <Ellipse.Fill>
+        <RadialGradientBrush>
+          <GradientStop Color="#2563EB" Offset="0"/>
+          <GradientStop Color="Transparent" Offset="1"/>
+        </RadialGradientBrush>
+      </Ellipse.Fill>
+    </Ellipse>
+
+    <!-- Główna zawartość -->
+    <Grid RowDefinitions="Auto,*,Auto" Margin="0">
+
+      <!-- ══ PASEK TYTUŁU (custom, draggable) ════════════════════════════ -->
+      <Border Grid.Row="0"
+              Background="Transparent"
+              Height="44"
+              IsHitTestVisible="True">
+        <Panel>
+          <!-- Strefa do przeciągania okna -->
+          <Border Background="Transparent"
+                  x:Name="TitleBarDragZone"/>
+          <!-- Tytuł -->
+          <StackPanel Orientation="Horizontal"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      Spacing="8">
+            <TextBlock Text="🧹" FontSize="16" VerticalAlignment="Center"/>
+            <TextBlock Text="VST Deleter"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       Foreground="#6B6B80"
+                       VerticalAlignment="Center"/>
+          </StackPanel>
+        </Panel>
+      </Border>
+
+      <!-- ══ CONTENT AREA ════════════════════════════════════════════════ -->
+      <Grid Grid.Row="1" Margin="36,0,36,36">
+
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 1: WYSZUKIWANIE                                          -->
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto,*"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.Search}}">
+
+          <!-- Nagłówek -->
+          <StackPanel Grid.Row="0" Margin="0,0,0,36">
+            <TextBlock Text="Wyczyść wtyczki VST &amp; AU"
+                       FontSize="30" FontWeight="Bold"
+                       Foreground="#F3F4F6"/>
+            <TextBlock Text="Wyszukaj wtyczkę, przejrzyj pliki i usuń to, co chcesz."
+                       FontSize="14" Foreground="#6B6B80" Margin="0,8,0,0"/>
+          </StackPanel>
+
+          <!-- Etykieta sekcji -->
+          <TextBlock Grid.Row="1"
+                     Text="NAZWA WTYCZKI"
+                     Classes="section-label"
+                     Margin="0,0,0,8"/>
+
+          <!-- SearchBox + Dropdown -->
+          <Grid Grid.Row="2" RowDefinitions="Auto,Auto">
+
+            <!-- Pole wyszukiwania -->
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+              <TextBox Grid.Column="0"
+                       Classes="search-box"
+                       Text="{Binding SearchText}"
+                       PlaceholderText="np. Guitar Rig 6, Serum, Kontakt…"
+                       x:Name="SearchBox"/>
+              <Button Grid.Column="1"
+                      Classes="action-btn"
+                      Command="{Binding StartScanCommand}"
+                      ToolTip.Tip="Szukaj plików tej wtyczki">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="🔍" FontSize="16"/>
+                  <TextBlock Text="Skanuj" FontSize="14" FontWeight="SemiBold"/>
+                </StackPanel>
+              </Button>
+            </Grid>
+
+            <!-- Lista podpowiedzi -->
+            <Border Grid.Row="1"
+                    IsVisible="{Binding ShowSuggestions}"
+                    Background="#18181F"
+                    BorderBrush="#2D2D45"
+                    BorderThickness="1"
+                    CornerRadius="0,0,12,12"
+                    Margin="0,-2,136,0"
+                    ZIndex="100"
+                    BoxShadow="0 8 24 #20000000">
+              <ItemsControl ItemsSource="{Binding Suggestions}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Button Background="Transparent"
+                            BorderThickness="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left"
+                            Padding="18,11"
+                            Cursor="Hand"
+                            Command="{Binding $parent[Window].DataContext.SelectSuggestionCommand}"
+                            CommandParameter="{Binding}">
+                      <Button.Styles>
+                        <Style Selector="Button:pointerover /template/ ContentPresenter">
+                          <Setter Property="Background" Value="#24243C"/>
+                        </Style>
+                      </Button.Styles>
+                      <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Text="🔌" FontSize="13" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding}"
+                                   FontSize="14"
+                                   Foreground="#E5E7EB"
+                                   VerticalAlignment="Center"/>
+                      </StackPanel>
+                    </Button>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </Border>
+          </Grid>
+
+          <!-- ────────────────────────────────────────────────────────────── -->
+          <!-- NOWOŚĆ: Sekcja lokalnych wtyczek (Zainstalowane)                 -->
+          <!-- ────────────────────────────────────────────────────────────── -->
+          <StackPanel Grid.Row="3" Margin="0,24,0,0" Spacing="8">
+            <TextBlock Text="ALBO WYBIERZ Z ZAINSTALOWANYCH"
+                       Classes="section-label"/>
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+              
+              <!-- ComboBox z wtyczkami -->
+              <ComboBox Grid.Column="0"
+                        HorizontalAlignment="Stretch"
+                        ItemsSource="{Binding LocalPlugins}"
+                        SelectedItem="{Binding SelectedLocalPlugin}"
+                        PlaceholderText="Wybierz wykrytą wtyczkę z dysku..."
+                        Background="#18181F"
+                        BorderBrush="#2D2D45"
+                        CornerRadius="8"
+                        Height="48"
+                        Padding="16,0">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              
+              <!-- Przycisk skanowania lokalnej wtyczki -->
+              <Button Grid.Column="1"
+                      Classes="action-btn"
+                      Command="{Binding ScanLocalPluginCommand}"
+                      IsEnabled="{Binding SelectedLocalPlugin, Converter={x:Static ObjectConverters.IsNotNull}}"
+                      Background="#2563EB"
+                      ToolTip.Tip="Uruchom bezpieczny skaner dla wybranej wtyczki z dysku">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="⚡" FontSize="16"/>
+                  <TextBlock Text="Skanuj z systemu" FontSize="14" FontWeight="SemiBold"/>
+                </StackPanel>
+              </Button>
+            </Grid>
+            
+            <!-- Info o formatach pod spodem -->
+            <TextBlock Text="{Binding SelectedLocalPluginFormatsText}"
+                       FontSize="12"
+                       Foreground="#10B981"
+                       FontWeight="SemiBold"
+                       Margin="4,2,0,0"
+                       IsVisible="{Binding SelectedLocalPlugin, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+          </StackPanel>
+
+          <!-- Hint i przycisk przywracania -->
+          <StackPanel Grid.Row="4" VerticalAlignment="Top" Margin="0,24,0,0" Spacing="16">
+            <TextBlock Text="💡  Baza zawiera 200+ znanych wtyczek VST/AU/CLAP. Możesz też wpisać własną nazwę."
+                       FontSize="12" Foreground="#4B5563" TextWrapping="Wrap"/>
+            <Border Background="#0D0D1A" BorderBrush="#2A2A42" BorderThickness="1"
+                    CornerRadius="10" Padding="18,14">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="4">
+                  <TextBlock Text="Masz już kopię zapasową?" FontSize="13"
+                             FontWeight="SemiBold" Foreground="#9CA3AF"/>
+                  <TextBlock Text="Wczytaj manifest i przywróć usunięte wcześniej pliki."
+                             FontSize="11" Foreground="#4B5563" TextWrapping="Wrap"/>
+                </StackPanel>
+                <Button Grid.Column="1" Classes="ghost-btn"
+                        Command="{Binding GoToRestoreCommand}" Margin="12,0,0,0">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="🔄"/>
+                    <TextBlock Text="Przywróć kopię"/>
+                  </StackPanel>
+                </Button>
+              </Grid>
+            </Border>
+          </StackPanel>
+        </Grid>
+
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 2: SKANOWANIE                                            -->
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="*,Auto,Auto,*"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.Scanning}}">
+
+          <StackPanel Grid.Row="1"
+                      HorizontalAlignment="Center"
+                      Spacing="24">
+            <TextBlock Text="🔍"
+                       FontSize="48"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="Szukam śladów po wtyczce…"
+                       FontSize="22" FontWeight="Bold"
+                       Foreground="#F3F4F6"
+                       HorizontalAlignment="Center"/>
+            <ProgressBar IsIndeterminate="True"
+                         Width="320" Height="4"
+                         Foreground="#7C3AED"
+                         Background="#1F1F2E"
+                         CornerRadius="2"/>
+          </StackPanel>
+          <TextBlock Grid.Row="2"
+                     Text="{Binding ScanStatus}"
+                     FontSize="12"
+                     Foreground="#6B6B80"
+                     HorizontalAlignment="Center"
+                     Margin="0,16,0,0"
+                     MaxWidth="500"
+                     TextTrimming="CharacterEllipsis"/>
+        </Grid>
+
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 3: WYNIKI                                                -->
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="Auto,Auto,*,Auto"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.Results}}">
+
+          <!-- Nagłówek wyników -->
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+            <StackPanel Grid.Column="0">
+              <TextBlock Text="{Binding SelectedPlugin,
+                           StringFormat='Wyniki dla: {0}'}"
+                         FontSize="22" FontWeight="Bold"
+                         Foreground="#F3F4F6"/>
+              <TextBlock Foreground="#6B6B80" FontSize="13" Margin="0,4,0,0">
+                <TextBlock.Text>
+                  <MultiBinding StringFormat="Znaleziono {0} elementów · łącznie {1}">
+                    <Binding Path="FoundItems.Count"/>
+                    <Binding Path="TotalSizeLabel"/>
+                  </MultiBinding>
+                </TextBlock.Text>
+              </TextBlock>
+            </StackPanel>
+            <Button Grid.Column="1"
+                    Classes="ghost-btn"
+                    Command="{Binding ResetCommand}"
+                    VerticalAlignment="Top">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="←" FontSize="14"/>
+                <TextBlock Text="Nowe wyszukiwanie"/>
+              </StackPanel>
+            </Button>
+          </Grid>
+
+          <!-- Toolbar zaznaczania -->
+          <StackPanel Grid.Row="1" Spacing="0" IsVisible="{Binding HasResults}">
+            <Border Background="#13131D" CornerRadius="8,8,0,0" Padding="14,10">
+              <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                <Button Grid.Column="0" Classes="ghost-btn" Command="{Binding SelectAllCommand}"
+                        Padding="12,7" FontSize="12">Zaznacz wszystko</Button>
+                <Button Grid.Column="1" Classes="ghost-btn" Command="{Binding DeselectAllCommand}"
+                        Padding="12,7" FontSize="12" Margin="6,0,0,0">Odznacz wszystko</Button>
+                <TextBlock Grid.Column="3" VerticalAlignment="Center" FontSize="12" Foreground="#9CA3AF">
+                  <TextBlock.Text>
+                    <MultiBinding StringFormat="Zaznaczono: {0}">
+                      <Binding Path="SelectedSizeLabel"/>
+                    </MultiBinding>
+                  </TextBlock.Text>
+                </TextBlock>
+              </Grid>
+            </Border>
+
+            <!-- ── Karta kopii zapasowej ─────────────────────────────── -->
+            <Border Background="#0E0E1C" BorderBrush="#2A2A42" BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,8,8" Padding="14,10" Margin="0,0,0,6">
+              <StackPanel Spacing="8">
+                <CheckBox IsChecked="{Binding BackupEnabled}"
+                          Foreground="#C4B5FD" FontSize="13" FontWeight="SemiBold">
+                  🔒  Utwórz kopię zapasową przed usunięciem
+                </CheckBox>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"
+                      IsVisible="{Binding BackupEnabled}" Margin="22,0,0,0">
+                  <Border Grid.Column="0" Background="#13131D" BorderBrush="#2D2D45"
+                          BorderThickness="1" CornerRadius="6" Padding="10,7">
+                    <TextBlock Text="{Binding BackupFolderPath,
+                                     FallbackValue='(kliknij Wybierz…)'}"
+                               FontSize="12" FontFamily="Menlo,Consolas,monospace"
+                               Foreground="#9CA3AF" TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center"/>
+                  </Border>
+                  <Button Grid.Column="1" Classes="ghost-btn"
+                          Command="{Binding ChooseBackupFolderCommand}"
+                          Padding="12,7" FontSize="12">Wybierz…</Button>
+                </Grid>
+                <TextBlock Text="{Binding BackupSizeInfo}"
+                           IsVisible="{Binding BackupEnabled}"
+                           FontSize="11" Foreground="#6B7280" Margin="22,0,0,0"
+                           TextWrapping="Wrap"/>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <!-- Brak wyników -->
+          <StackPanel Grid.Row="2"
+                      IsVisible="{Binding !HasResults}"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      Spacing="12">
+            <TextBlock Text="✅" FontSize="48" HorizontalAlignment="Center"/>
+            <TextBlock Text="Nie znaleziono żadnych śladów"
+                       FontSize="20" FontWeight="SemiBold"
+                       Foreground="#F3F4F6"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="System jest czysty. Ta wtyczka nie pozostawiła śladów."
+                       FontSize="13" Foreground="#6B6B80"
+                       HorizontalAlignment="Center"/>
+          </StackPanel>
+
+          <!-- Lista plików -->
+          <ListBox Grid.Row="2"
+                   IsVisible="{Binding HasResults}"
+                   ItemsSource="{Binding FoundItems}"
+                   Background="Transparent"
+                   BorderThickness="0"
+                   SelectionMode="Multiple"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="models:FoundItem">
+                <Border Background="#13131D"
+                        CornerRadius="8"
+                        Padding="14,10"
+                        Margin="0,2">
+                  <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+
+                    <!-- Checkbox -->
+                    <CheckBox Grid.Column="0"
+                              IsChecked="{Binding IsSelected}"
+                              VerticalAlignment="Center"
+                              Margin="0,0,12,0"/>
+
+                    <!-- Ikona typu -->
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding TypeIcon}"
+                               FontSize="18"
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"/>
+
+                    <!-- Ścieżka i kategoria -->
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="3">
+                      <TextBlock Text="{Binding ShortPath}"
+                                 FontSize="13"
+                                 Foreground="#E5E7EB"
+                                 FontFamily="Menlo,Consolas,monospace"
+                                 TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Text="{Binding Category}"
+                                 FontSize="11"
+                                 Foreground="#6B6B80"/>
+                    </StackPanel>
+
+                    <!-- Rozmiar -->
+                    <TextBlock Grid.Column="4"
+                               Text="{Binding SizeFormatted}"
+                               FontSize="12"
+                               Foreground="#7C3AED"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Margin="16,0,0,0"
+                               HorizontalAlignment="Right"/>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <!-- Dolny pasek akcji -->
+          <Border Grid.Row="3"
+                  Background="#0F0F14"
+                  Padding="0,16,0,0"
+                  IsVisible="{Binding HasResults}">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="10">
+              <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock FontSize="13" Foreground="#9CA3AF">
+                  <TextBlock.Text>
+                    <MultiBinding StringFormat="Do usunięcia: {0}  ·  Rozmiar: {1}">
+                      <Binding Path="FoundItems.Count"/>
+                      <Binding Path="SelectedSizeLabel"/>
+                    </MultiBinding>
+                  </TextBlock.Text>
+                </TextBlock>
+              </StackPanel>
+              <Button Grid.Column="1"
+                      Classes="ghost-btn"
+                      Command="{Binding ResetCommand}">
+                Anuluj
+              </Button>
+              <Button Grid.Column="2"
+                      Classes="ghost-btn"
+                      Command="{Binding BackupOnlyCommand}"
+                      IsEnabled="{Binding BackupEnabled}"
+                      ToolTip.Tip="Wymaga wybranego folderu kopii zapasowej">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="🔒" FontSize="14"/>
+                  <TextBlock Text="Tylko kopia"/>
+                </StackPanel>
+              </Button>
+              <Button Grid.Column="3"
+                      Classes="danger-btn"
+                      Command="{Binding DeleteSelectedCommand}"
+                      IsEnabled="{Binding CanDelete}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="🗑" FontSize="15"/>
+                  <TextBlock Text="Usuń zaznaczone"/>
+                </StackPanel>
+              </Button>
+            </Grid>
+          </Border>
+        </Grid>
+
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 4: USUWANIE (postęp)                                     -->
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="*,Auto,Auto,Auto,*"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.Deleting}}">
+          <StackPanel Grid.Row="1" HorizontalAlignment="Center" Spacing="20">
+            <TextBlock Text="🗑️" FontSize="48" HorizontalAlignment="Center"/>
+            <TextBlock Text="Usuwam pliki…"
+                       FontSize="22" FontWeight="Bold"
+                       Foreground="#F3F4F6"
+                       HorizontalAlignment="Center"/>
+            <ProgressBar IsIndeterminate="True"
+                         Width="320" Height="4"
+                         Foreground="#DC2626"
+                         Background="#1F1F2E"
+                         CornerRadius="2"/>
+          </StackPanel>
+          <TextBlock Grid.Row="2"
+                     Text="{Binding DeleteProgress}"
+                     FontSize="12" Foreground="#6B6B80"
+                     HorizontalAlignment="Center"
+                     Margin="0,12,0,0"
+                     MaxWidth="500"
+                     TextTrimming="CharacterEllipsis"/>
+        </Grid>
+
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 5: GOTOWE                                                -->
+        <!-- ────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="*,Auto,*"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.Done}}">
+
+          <StackPanel Grid.Row="1"
+                      HorizontalAlignment="Center"
+                      Spacing="20"
+                      MaxWidth="500">
+
+            <!-- Ikona sukcesu lub błędu -->
+            <TextBlock Text="⚠️"
+                       FontSize="56"
+                       HorizontalAlignment="Center"
+                       IsVisible="{Binding HasErrors}"/>
+            <TextBlock Text="✅"
+                       FontSize="56"
+                       HorizontalAlignment="Center"
+                       IsVisible="{Binding !HasErrors}"/>
+            <TextBlock Text="{Binding DeleteStatus}"
+                       FontSize="20" FontWeight="Bold" Foreground="#F3F4F6"
+                       HorizontalAlignment="Center" TextAlignment="Center"/>
+
+            <!-- Kopia zapasowa: info o manifeście -->
+            <Border IsVisible="{Binding CreatedManifestPath,
+                                Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    Background="#0D1A0D" BorderBrush="#14532D" BorderThickness="1"
+                    CornerRadius="8" Padding="14,10">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Spacing="3">
+                  <TextBlock Text="🔒  Kopia zapasowa zapisana:" FontSize="12"
+                             FontWeight="SemiBold" Foreground="#86EFAC"/>
+                  <TextBlock Text="{Binding CreatedManifestPath}"
+                             FontSize="11" FontFamily="Menlo,Consolas,monospace"
+                             Foreground="#6EE7B7" TextWrapping="Wrap"/>
+                </StackPanel>
+                <Button Grid.Column="1" Classes="ghost-btn" Margin="12,0,0,0"
+                        Command="{Binding LoadCreatedManifestAndReviewCommand}"
+                        Padding="10,6" FontSize="11">
+                  Podgląd →
+                </Button>
+              </Grid>
+            </Border>
+
+            <!-- Szczegóły błędów -->
+            <Border IsVisible="{Binding HasErrors}"
+                    Background="#1A0A0A" BorderBrush="#7F1D1D" BorderThickness="1"
+                    CornerRadius="8" Padding="16" MaxHeight="140">
+              <ScrollViewer>
+                <TextBlock Text="{Binding ErrorDetails}" FontSize="12"
+                           Foreground="#F87171" FontFamily="Menlo,Consolas,monospace"
+                           TextWrapping="Wrap"/>
+              </ScrollViewer>
+            </Border>
+            <TextBlock IsVisible="{Binding HasErrors}"
+                       Text="💡 Pliki systemowe wymagają uprawnień administratora (uruchom z sudo)."
+                       FontSize="12" Foreground="#6B7280" TextWrapping="Wrap"
+                       TextAlignment="Center"/>
+
+            <!-- Przyciski -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center"
+                        Spacing="12" Margin="0,8,0,0">
+              <Button Classes="ghost-btn" Command="{Binding BackToResultsCommand}"
+                      IsVisible="{Binding HasErrors}">← Wróć do wyników</Button>
+              <Button Classes="action-btn" Command="{Binding ResetCommand}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="🔄"/>
+                  <TextBlock Text="Nowe wyszukiwanie"/>
+                </StackPanel>
+              </Button>
+            </StackPanel>
+          </StackPanel>
+        </Grid>
+
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 5b: TWORZENIE KOPII (BackingUp)                           -->
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="*,Auto,Auto,Auto,*"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.BackingUp}}">
+          <StackPanel Grid.Row="1" HorizontalAlignment="Center" Spacing="20">
+            <TextBlock Text="🔒" FontSize="48" HorizontalAlignment="Center"/>
+            <TextBlock Text="Tworzę kopię zapasową…" FontSize="22" FontWeight="Bold"
+                       Foreground="#F3F4F6" HorizontalAlignment="Center"/>
+            <ProgressBar IsIndeterminate="True" Width="320" Height="4"
+                         Foreground="#7C3AED" Background="#1F1F2E" CornerRadius="2"/>
+          </StackPanel>
+          <TextBlock Grid.Row="2" Text="{Binding BackupProgressText}"
+                     FontSize="12" Foreground="#6B6B80" HorizontalAlignment="Center"
+                     Margin="0,12,0,0" MaxWidth="520" TextTrimming="CharacterEllipsis"/>
+          <TextBlock Grid.Row="3" Text="Nie zamykaj programu — kopia jest tworzona…"
+                     FontSize="11" Foreground="#4B5563" HorizontalAlignment="Center"
+                     Margin="0,6,0,0"/>
+        </Grid>
+
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 6: WYBÓR MANIFESTU (RestoreSelect)                        -->
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="Auto,*,Auto"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.RestoreSelect}}">
+
+          <StackPanel Grid.Row="0" Margin="0,0,0,24">
+            <TextBlock Text="Przywróć kopię zapasową" FontSize="26" FontWeight="Bold"
+                       Foreground="#F3F4F6"/>
+            <TextBlock FontSize="13" Foreground="#6B6B80" Margin="0,6,0,0" TextWrapping="Wrap">
+              Wybierz plik manifestu (VSTDeleter_manifest.json) z folderu kopii.
+              Manifest zawiera mapę wszystkich plików i ich oryginalnych lokalizacji.
+            </TextBlock>
+          </StackPanel>
+
+          <Border Grid.Row="1" Background="#13131D" CornerRadius="12" Padding="32">
+            <StackPanel Spacing="20" VerticalAlignment="Center" HorizontalAlignment="Center">
+              <TextBlock Text="📂" FontSize="52" HorizontalAlignment="Center"/>
+              <TextBlock Text="Kliknij poniżej, aby wybrać manifest kopii"
+                         FontSize="14" Foreground="#9CA3AF" HorizontalAlignment="Center"/>
+              <Button Classes="action-btn" Command="{Binding ChooseManifestFileCommand}"
+                      HorizontalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="📁"/>
+                  <TextBlock Text="Wybierz VSTDeleter_manifest.json"/>
+                </StackPanel>
+              </Button>
+
+              <!-- Wybrany plik -->
+              <Border IsVisible="{Binding HasLoadedManifest}"
+                      Background="#0D1A0D" BorderBrush="#14532D" BorderThickness="1"
+                      CornerRadius="8" Padding="14,10">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="✓  Manifest wczytany poprawnie:" FontSize="12"
+                             FontWeight="SemiBold" Foreground="#86EFAC"/>
+                  <TextBlock Text="{Binding RestoreHeaderInfo}" FontSize="12"
+                             Foreground="#6EE7B7"/>
+                </StackPanel>
+              </Border>
+              <TextBlock IsVisible="{Binding HasLoadedManifest}"
+                         Text="{Binding ManifestFilePath}" FontSize="10"
+                         FontFamily="Menlo,Consolas,monospace" Foreground="#4B5563"
+                         HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="440"
+                         TextAlignment="Center"/>
+            </StackPanel>
+          </Border>
+
+          <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto" Margin="0,16,0,0">
+            <Button Grid.Column="0" Classes="ghost-btn"
+                    Command="{Binding BackToSearchFromRestoreCommand}">← Wróć</Button>
+            <Button Grid.Column="2" Classes="action-btn"
+                    Command="{Binding LoadManifestAndReviewCommand}"
+                    IsEnabled="{Binding HasLoadedManifest}">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Podgląd i przywracanie"/>
+                <TextBlock Text="→"/>
+              </StackPanel>
+            </Button>
+          </Grid>
+        </Grid>
+
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 7: PODGLĄD PRZYWRACANIA (RestoreReview)                   -->
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="Auto,Auto,*,Auto"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.RestoreReview}}">
+
+          <!-- Nagłówek -->
+          <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+            <StackPanel Grid.Column="0">
+              <TextBlock Text="Podgląd przywracania" FontSize="22" FontWeight="Bold"
+                         Foreground="#F3F4F6"/>
+              <TextBlock Text="{Binding RestoreHeaderInfo}" FontSize="12"
+                         Foreground="#6B6B80" Margin="0,4,0,0"/>
+            </StackPanel>
+            <Button Grid.Column="1" Classes="ghost-btn"
+                    Command="{Binding BackToRestoreSelectCommand}"
+                    VerticalAlignment="Top">← Wróć</Button>
+          </Grid>
+
+          <!-- Info o katalogu kopii -->
+          <Border Grid.Row="1" Background="#0D0D18" BorderBrush="#2A2A42" BorderThickness="1"
+                  CornerRadius="7" Padding="12,8" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="📂" VerticalAlignment="Center"/>
+              <StackPanel Spacing="2">
+                <TextBlock Text="Folder kopii:" FontSize="11" FontWeight="SemiBold"
+                           Foreground="#6B6B80"/>
+                <TextBlock Text="{Binding LoadedManifest.BackupFolder}"
+                           FontSize="11" FontFamily="Menlo,Consolas,monospace"
+                           Foreground="#9CA3AF" TextTrimming="CharacterEllipsis"/>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <!-- Lista wpisów -->
+          <ScrollViewer Grid.Row="2">
+            <ItemsControl ItemsSource="{Binding RestoreEntries}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="models:BackupEntry">
+                  <Border Background="#13131D" CornerRadius="8" Padding="14,10" Margin="0,2">
+                    <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                      <TextBlock Grid.Column="0" Text="{Binding TypeIcon}" FontSize="18"
+                                 VerticalAlignment="Center" Margin="0,0,10,0"/>
+                      <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="3">
+                        <TextBlock Text="{Binding ShortOriginalPath}"
+                                   FontSize="12" FontFamily="Menlo,Consolas,monospace"
+                                   Foreground="#E5E7EB" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding Category}" FontSize="11" Foreground="#6B6B80"/>
+                      </StackPanel>
+                      <TextBlock Grid.Column="3" Text="{Binding SizeFormatted}"
+                                 FontSize="12" Foreground="#7C3AED" FontWeight="SemiBold"
+                                 VerticalAlignment="Center" Margin="12,0,0,0"
+                                 HorizontalAlignment="Right"/>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+
+          <!-- Dolny pasek -->
+          <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto" Margin="0,14,0,0">
+            <Button Grid.Column="0" Classes="ghost-btn"
+                    Command="{Binding BackToSearchFromRestoreCommand}">Anuluj</Button>
+            <TextBlock Grid.Column="1" Text="Pliki zostaną skopiowane z kopii na oryginalne ścieżki."
+                       FontSize="11" Foreground="#4B5563" VerticalAlignment="Center"
+                       HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="260"
+                       TextAlignment="Center"/>
+            <Button Grid.Column="2" Classes="action-btn"
+                    Command="{Binding StartRestoreCommand}">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="🔄"/>
+                <TextBlock Text="Przywróć"/>
+              </StackPanel>
+            </Button>
+          </Grid>
+        </Grid>
+
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 8: PRZYWRACANIE — POSTĘP (Restoring)                      -->
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="*,Auto,Auto,Auto,*"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.Restoring}}">
+          <StackPanel Grid.Row="1" HorizontalAlignment="Center" Spacing="20">
+            <TextBlock Text="🔄" FontSize="48" HorizontalAlignment="Center"/>
+            <TextBlock Text="Przywracam pliki…" FontSize="22" FontWeight="Bold"
+                       Foreground="#F3F4F6" HorizontalAlignment="Center"/>
+            <ProgressBar IsIndeterminate="True" Width="320" Height="4"
+                         Foreground="#10B981" Background="#1F1F2E" CornerRadius="2"/>
+          </StackPanel>
+          <TextBlock Grid.Row="2" Text="{Binding RestoreProgressText}" FontSize="12"
+                     Foreground="#6B6B80" HorizontalAlignment="Center"
+                     Margin="0,12,0,0" MaxWidth="520" TextTrimming="CharacterEllipsis"/>
+          <TextBlock Grid.Row="3" Text="Nie zamykaj programu — pliki są kopiowane…"
+                     FontSize="11" Foreground="#4B5563" HorizontalAlignment="Center"
+                     Margin="0,6,0,0"/>
+        </Grid>
+
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <!--  FAZA 9: PRZYWRÓCONO (RestoreDone)                              -->
+        <!-- ──────────────────────────────────────────────────────────────── -->
+        <Grid RowDefinitions="*,Auto,*"
+              IsVisible="{Binding Phase,
+                Converter={x:Static ObjectConverters.Equal},
+                ConverterParameter={x:Static vm:AppPhase.RestoreDone}}">
+          <StackPanel Grid.Row="1" HorizontalAlignment="Center" Spacing="20" MaxWidth="500">
+            <TextBlock Text="⚠️" FontSize="56" HorizontalAlignment="Center"
+                       IsVisible="{Binding RestoreHasErrors}"/>
+            <TextBlock Text="✅" FontSize="56" HorizontalAlignment="Center"
+                       IsVisible="{Binding !RestoreHasErrors}"/>
+            <TextBlock Text="{Binding RestoreStatus}" FontSize="20" FontWeight="Bold"
+                       Foreground="#F3F4F6" HorizontalAlignment="Center"
+                       TextAlignment="Center"/>
+
+            <Border IsVisible="{Binding RestoreHasErrors}"
+                    Background="#1A0A0A" BorderBrush="#7F1D1D" BorderThickness="1"
+                    CornerRadius="8" Padding="16" MaxHeight="140">
+              <ScrollViewer>
+                <TextBlock Text="{Binding RestoreErrorDetails}" FontSize="12"
+                           Foreground="#F87171" FontFamily="Menlo,Consolas,monospace"
+                           TextWrapping="Wrap"/>
+              </ScrollViewer>
+            </Border>
+            <TextBlock IsVisible="{Binding RestoreHasErrors}"
+                       Text="💡 Katalogi systemowe mogą wymagać sudo. Możesz też przywrócić ręcznie — patrz manifest."
+                       FontSize="12" Foreground="#6B7280" TextWrapping="Wrap"
+                       TextAlignment="Center"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center"
+                        Spacing="12" Margin="0,8,0,0">
+              <Button Classes="ghost-btn" Command="{Binding BackToRestoreSelectCommand}"
+                      IsVisible="{Binding RestoreHasErrors}">← Spróbuj ponownie</Button>
+              <Button Classes="action-btn" Command="{Binding ResetCommand}">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Text="🏠"/>
+                  <TextBlock Text="Strona główna"/>
+                </StackPanel>
+              </Button>
+            </StackPanel>
+          </StackPanel>
+        </Grid>
+
+      </Grid>
+
+      <!-- ══ LOG CONSOLE (DZIENNIK ZDARZEŃ) ════════════════════════════════ -->
+      <Expander Grid.Row="2"
+                Margin="36,0,36,16"
+                Header="Dziennik błędów systemu (ukryty debugger)"
+                Foreground="#6B6B80"
+                Background="Transparent"
+                BorderBrush="#1F1F2E"
+                BorderThickness="1"
+                CornerRadius="8"
+                IsVisible="{Binding AppLogs.Count}">
+        <ScrollViewer MaxHeight="120">
+          <ItemsControl ItemsSource="{Binding AppLogs}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding}"
+                           FontSize="11"
+                           Foreground="#EF4444"
+                           FontFamily="Menlo,Consolas,monospace"
+                           Margin="0,2"
+                           TextWrapping="Wrap"/>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Expander>
+    </Grid>
+  </Panel>
+</Window>
