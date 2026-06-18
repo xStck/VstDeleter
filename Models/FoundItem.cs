@@ -28,6 +28,19 @@ public partial class FoundItem : ObservableObject
 
     // Category for grouping in the UI
     public string Category { get; init; } = "Inne";
+    public string CategoryTranslated => Services.LanguageService.Instance[Category];
+
+    public FoundItem()
+    {
+        Services.LanguageService.Instance.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == "CurrentLanguage" || e.PropertyName == "Item")
+            {
+                OnPropertyChanged(nameof(CategoryTranslated));
+                OnPropertyChanged(nameof(TypeLabel));
+            }
+        };
+    }
 
     private static string FormatSize(long bytes)
     {

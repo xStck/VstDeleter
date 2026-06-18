@@ -37,7 +37,7 @@ public class BackupManifest
 /// <summary>
 /// Jeden wpis w manifeście — opisuje jeden plik lub katalog.
 /// </summary>
-public class BackupEntry
+public partial class BackupEntry : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
 {
     /// <summary>Oryginalna, absolutna ścieżka na dysku (cel przywrócenia).</summary>
     [JsonPropertyName("originalAbsolutePath")]
@@ -57,6 +57,19 @@ public class BackupEntry
     /// <summary>Kategoria wykryta przez skaner (np. "VST3 (systemowy)").</summary>
     [JsonPropertyName("category")]
     public string Category { get; init; } = string.Empty;
+
+    [JsonIgnore] public string CategoryTranslated => Services.LanguageService.Instance[Category];
+
+    public BackupEntry()
+    {
+        Services.LanguageService.Instance.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == "CurrentLanguage" || e.PropertyName == "Item")
+            {
+                OnPropertyChanged(nameof(CategoryTranslated));
+            }
+        };
+    }
 
     /// <summary>Rozmiar w bajtach.</summary>
     [JsonPropertyName("sizeBytes")]

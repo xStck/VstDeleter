@@ -67,7 +67,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     public string SelectedLocalPluginFormatsText =>
         SelectedLocalPlugin == null 
             ? string.Empty 
-            : $"Wykryto formaty: {string.Join(", ", SelectedLocalPlugin.Formats)}";
+            : LanguageService.Instance["Phase1_DetectedFormats"] + " " + string.Join(", ", SelectedLocalPlugin.Formats);
 
     [RelayCommand]
     private async Task LoadLocalPluginsAsync()
@@ -81,7 +81,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            AppLogs.Insert(0, $"[{DateTime.Now:HH:mm:ss}] [LoadLocalPluginsAsync] Błąd krytyczny: {ex.Message}");
+            AppLogs.Insert(0, $"[{DateTime.Now:HH:mm:ss}] [LoadLocalPluginsAsync] {LanguageService.Instance["Log_FatalError"]}: {ex.Message}");
         }
     }
 
@@ -130,8 +130,8 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             if (!BackupEnabled) return string.Empty;
             long size    = FoundItems.Where(i => i.IsSelected).Sum(i => i.SizeBytes);
             string sizeS = FormatSize(size);
-            string folder = string.IsNullOrWhiteSpace(BackupFolderPath) ? "(wybierz folder)" : BackupFolderPath;
-            return $"Szacowana kopia: ~{sizeS}  →  {folder}";
+            string folder = string.IsNullOrWhiteSpace(BackupFolderPath) ? LanguageService.Instance["Backup_NoFolder"] : BackupFolderPath;
+            return string.Format(LanguageService.Instance["Backup_EstimatedSize"], sizeS, folder);
         }
     }
 
@@ -162,9 +162,16 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     public bool HasLoadedManifest => LoadedManifest != null;
 
     public string RestoreHeaderInfo => LoadedManifest == null ? string.Empty :
-        $"Wtyczka: {LoadedManifest.PluginName}  ·  " +
-        $"Kopia z: {LoadedManifest.Created:dd.MM.yyyy HH:mm}  ·  " +
-        $"{LoadedManifest.Entries.Count} elementów";
+        string.Format(LanguageService.Instance["Restore_HeaderInfo"], LoadedManifest.PluginName, LoadedManifest.Created, LoadedManifest.Entries.Count);
+
+    public string CurrentLanguageTarget => LanguageService.Instance.CurrentLanguage == "pl" ? "EN" : "PL";
+
+    [RelayCommand]
+    private void ToggleLanguage()
+    {
+        LanguageService.Instance.ToggleLanguage();
+        OnPropertyChanged(nameof(CurrentLanguageTarget));
+    }
 
     // ─────────────────────────────────────────────────────────────────────────────────
     private CancellationTokenSource? _cts;
@@ -335,7 +342,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         var currentToken = _cts.Token;
 
         Phase              = AppPhase.BackingUp;
-        BackupProgressText = "Przygotowuję kopię…";
+        BackupProgressText = LanguageService.Instance["Backup_Preparing"];
         CreatedManifestPath = string.Empty;
 
         int done = 0;
@@ -398,14 +405,14 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrWhiteSpace(BackupFolderPath))
             {
                 HasErrors = true;
-                ErrorDetails = "Aby kontynuować, wybierz folder docelowy dla kopii zapasowej (lub odznacz tę opcję).";
+                ErrorDetails = LanguageService.Instance["Delete_FolderRequired"];
                 Phase = AppPhase.Done;
-                DeleteStatus = "Przerwano operację ze względów bezpieczeństwa.";
+                DeleteStatus = LanguageService.Instance["Delete_AbortedSafe"];
                 return;
             }
 
             Phase             = AppPhase.BackingUp;
-            BackupProgressText = "Przygotowuję kopię…";
+            BackupProgressText = LanguageService.Instance["Backup_Preparing"];
             CreatedManifestPath = string.Empty;
 
             int done = 0;

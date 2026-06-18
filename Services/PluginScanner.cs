@@ -13,13 +13,13 @@ public static class PluginScanner
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(pluginName) || pluginName.Trim().Length < 2)
-            throw new ArgumentException("Nazwa wtyczki musi mieć co najmniej 2 znaki.");
+            throw new ArgumentException(LanguageService.Instance["Err_TooShort"]);
 
         string[] invalidChars = { "/", "\\", ".", "*", "?", "<", ">", "|", ":" };
         foreach (var c in invalidChars)
         {
             if (pluginName.Contains(c))
-                throw new ArgumentException($"Nazwa wtyczki zawiera niedozwolone znaki: {c}");
+                throw new ArgumentException($"{LanguageService.Instance["Err_InvalidChars"]}: {c}");
         }
 
         return await Task.Run(() => Scan(pluginName, progress, ct), ct);

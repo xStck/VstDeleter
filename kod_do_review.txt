@@ -1,0 +1,2546 @@
+--- NAZWA PLIKU: ./ViewModels/ViewModelBase.cs ---
+﻿using CommunityToolkit.Mvvm.ComponentModel;
+
+namespace VstDeleter.ViewModels;
+
+public abstract class ViewModelBase : ObservableObject
+{
+}
+
+--- NAZWA PLIKU: ./ViewModels/MainWindowViewModel.cs ---
+﻿namespace VstDeleter.ViewModels;
+
+public partial class MainWindowViewModel : ViewModelBase
+{
+    public string Greeting { get; } = "Welcome to Avalonia!";
+}
+
+--- NAZWA PLIKU: ./ViewModels/MainViewModel.cs ---
+using System.Collections.ObjectModel;
+using Avalonia.Controls;
+using Avalonia.Platform.Storage;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using VstDeleter.Models;
+using VstDeleter.Services;
+
+namespace VstDeleter.ViewModels;
+
+public enum AppPhase
+{
+    Search,
+    Scanning,
+    Results,
+    BackingUp,
+    Deleting,
+    Done,
+    RestoreSelect,
+    RestoreReview,
+    Restoring,
+    RestoreDone
+}
+
+public partial class MainViewModel : ViewModelBase, IDisposable
+{
+    public MainViewModel()
+    {
+        // Załaduj zainstalowane wtyczki przy starcie
+        _ = LoadLocalPluginsAsync();
+
+        // Subskrypcja logów systemowych
+        Services.AppLogger.OnLog += OnLogReceived;
+    }
+
+    private void OnLogReceived(string message)
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            AppLogs.Insert(0, $"[{DateTime.Now:HH:mm:ss}] {message}");
+        });
+    }
+    // ── Dostęp do Storage (file/folder picker) ────────────────────────────────
+    private TopLevel? _topLevel;
+    public void SetTopLevel(TopLevel tl) => _topLevel = tl;
+
+    // ── Faza aplikacji ────────────────────────────────────────────────────────
+    [ObservableProperty] private AppPhase _phase = AppPhase.Search;
+
+    // ── Wyszukiwarka ─────────────────────────────────────────────────────────
+    [ObservableProperty] private string  _searchText = string.Empty;
+    [ObservableProperty] private bool    _showSuggestions;
+    [ObservableProperty] private string? _selectedPlugin;
+
+    public ObservableCollection<string> Suggestions { get; } = new();
+
+    // ── Zlokalizowane wtyczki (Discovery) ────────────────────────────────────
+    public ObservableCollection<InstalledPlugin> LocalPlugins { get; } = new();
+
+    // Dziennik zdarzeń diagnostycznych (Logi)
+    public ObservableCollection<string> AppLogs { get; } = new();
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedLocalPluginFormatsText))]
+    private InstalledPlugin? _selectedLocalPlugin;
+
+    public string SelectedLocalPluginFormatsText =>
+        SelectedLocalPlugin == null 
+            ? string.Empty 
+            : LanguageService.Instance["Phase1_DetectedFormats"] + " " + string.Join(", ", SelectedLocalPlugin.Formats);
+
+    [RelayCommand]
+    private async Task LoadLocalPluginsAsync()
+    {
+        try
+        {
+            var list = await InstalledPluginsDiscovery.DiscoverPluginsAsync();
+            LocalPlugins.Clear();
+            foreach (var p in list)
+                LocalPlugins.Add(p);
+        }
+        catch (Exception ex)
+        {
+            AppLogs.Insert(0, $"[{DateTime.Now:HH:mm:ss}] [LoadLocalPluginsAsync] {LanguageService.Instance["Log_FatalError"]}: {ex.Message}");
+        }
+    }
+
+    [RelayCommand]
+    private async Task ScanLocalPluginAsync()
+    {
+        if (SelectedLocalPlugin == null) return;
+        
+        // Bezszwowa integracja z obecnym pipeline'm skanującym
+        SearchText = SelectedLocalPlugin.Name;
+        await StartScanAsync();
+    }
+
+    // ── Skanowanie ────────────────────────────────────────────────────────────
+    [ObservableProperty] private string _scanStatus = string.Empty;
+
+    // ── Wyniki ────────────────────────────────────────────────────────────────
+    public ObservableCollection<FoundItem> FoundItems { get; } = new();
+
+    [ObservableProperty] private string _totalSizeLabel   = string.Empty;
+    [ObservableProperty] private string _selectedSizeLabel = string.Empty;
+    [ObservableProperty] private bool   _hasResults;
+    [ObservableProperty] private bool   _allSelected = true;
+
+    // ── Backup ────────────────────────────────────────────────────────────────
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanDelete))]
+    [NotifyPropertyChangedFor(nameof(BackupSizeInfo))]
+    private bool _backupEnabled;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanDelete))]
+    [NotifyPropertyChangedFor(nameof(BackupSizeInfo))]
+    private string _backupFolderPath = string.Empty;
+
+    [ObservableProperty] private string _backupProgressText = string.Empty;
+    [ObservableProperty] private string _createdManifestPath = string.Empty;
+
+    public bool CanDelete =>
+        !BackupEnabled || !string.IsNullOrWhiteSpace(BackupFolderPath);
+
+    public string BackupSizeInfo
+    {
+        get
+        {
+            if (!BackupEnabled) return string.Empty;
+            long size    = FoundItems.Where(i => i.IsSelected).Sum(i => i.SizeBytes);
+            string sizeS = FormatSize(size);
+            string folder = string.IsNullOrWhiteSpace(BackupFolderPath) ? LanguageService.Instance["Backup_NoFolder"] : BackupFolderPath;
+            return string.Format(LanguageService.Instance["Backup_EstimatedSize"], sizeS, folder);
+        }
+    }
+
+    // ── Usuwanie / wynik ──────────────────────────────────────────────────────
+    [ObservableProperty] private string _deleteStatus   = string.Empty;
+    [ObservableProperty] private string _deleteProgress = string.Empty;
+    [ObservableProperty] private bool   _hasErrors;
+    [ObservableProperty] private string _errorDetails   = string.Empty;
+    [ObservableProperty] private int    _deletedCount;
+
+    // ── Przywracanie ──────────────────────────────────────────────────────────
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RestoreEntries))]
+    [NotifyPropertyChangedFor(nameof(RestoreHeaderInfo))]
+    [NotifyPropertyChangedFor(nameof(HasLoadedManifest))]
+    private BackupManifest? _loadedManifest;
+
+    [ObservableProperty] private string _manifestFilePath   = string.Empty;
+    [ObservableProperty] private string _restoreStatus      = string.Empty;
+    [ObservableProperty] private string _restoreProgressText = string.Empty;
+    [ObservableProperty] private bool   _restoreHasErrors;
+    [ObservableProperty] private string _restoreErrorDetails = string.Empty;
+    [ObservableProperty] private int    _restoredCount;
+
+    public IReadOnlyList<BackupEntry> RestoreEntries =>
+        LoadedManifest?.Entries ?? (IReadOnlyList<BackupEntry>)Array.Empty<BackupEntry>();
+
+    public bool HasLoadedManifest => LoadedManifest != null;
+
+    public string RestoreHeaderInfo => LoadedManifest == null ? string.Empty :
+        string.Format(LanguageService.Instance["Restore_HeaderInfo"], LoadedManifest.PluginName, LoadedManifest.Created, LoadedManifest.Entries.Count);
+
+    public string CurrentLanguageTarget => LanguageService.Instance.CurrentLanguage == "pl" ? "EN" : "PL";
+
+    [RelayCommand]
+    private void ToggleLanguage()
+    {
+        LanguageService.Instance.ToggleLanguage();
+        OnPropertyChanged(nameof(CurrentLanguageTarget));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────────
+    private CancellationTokenSource? _cts;
+    private bool _isBulkUpdating;
+
+    public void Dispose()
+    {
+        Services.AppLogger.OnLog -= OnLogReceived;
+        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); _cts = null; }
+        GC.SuppressFinalize(this);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  AUTOUZUPEŁNIANIE
+    // ═════════════════════════════════════════════════════════════════════════
+    partial void OnSearchTextChanged(string value)
+    {
+        Suggestions.Clear();
+        if (string.IsNullOrWhiteSpace(value) || value.Length < 2) { ShowSuggestions = false; return; }
+
+        foreach (string s in PluginDatabase.Search(value, maxResults: 8))
+            Suggestions.Add(s);
+
+        ShowSuggestions = Suggestions.Count > 0;
+    }
+
+    [RelayCommand]
+    private void SelectSuggestion(string suggestion)
+    {
+        SearchText      = suggestion;
+        SelectedPlugin  = suggestion;
+        ShowSuggestions = false;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  SKANOWANIE
+    // ═════════════════════════════════════════════════════════════════════════
+    [RelayCommand]
+    private async Task StartScanAsync()
+    {
+        string plugin = string.IsNullOrWhiteSpace(SelectedPlugin)
+            ? SearchText.Trim()
+            : SelectedPlugin;
+
+        if (string.IsNullOrWhiteSpace(plugin)) return;
+
+        SelectedPlugin  = plugin;
+        ShowSuggestions = false;
+        Phase           = AppPhase.Scanning;
+        ScanStatus      = $"Szukam śladów: {plugin}…";
+        FoundItems.Clear();
+        AppLogs.Clear();
+
+        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        _cts = new CancellationTokenSource();
+
+        var currentToken = _cts.Token;
+
+        var progress = new Progress<string>(p =>
+            ScanStatus = $"Sprawdzam: {ShortenPath(p)}");
+
+        try
+        {
+            var items = await PluginScanner.ScanAsync(plugin, progress, currentToken);
+
+            foreach (var item in items)
+            {
+                item.PropertyChanged += (_, _) =>
+                {
+                    if (_isBulkUpdating) return;
+                    RecalcSelectedSize();
+                    OnPropertyChanged(nameof(BackupSizeInfo));
+                };
+                FoundItems.Add(item);
+            }
+
+            HasResults = FoundItems.Count > 0;
+            Phase      = AppPhase.Results;
+            RecalcSelectedSize();
+            RecalcTotalSize();
+        }
+        catch (ArgumentException ex)
+        {
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase = AppPhase.Search;
+                ScanStatus = $"⚠ Błąd zapytania: {ex.Message}";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase = AppPhase.Search;
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  ZAZNACZANIE
+    // ═════════════════════════════════════════════════════════════════════════
+    [RelayCommand]
+    private void SelectAll()
+    {
+        _isBulkUpdating = true;
+        try
+        {
+            foreach (var item in FoundItems) item.IsSelected = true;
+        }
+        finally
+        {
+            _isBulkUpdating = false;
+        }
+        AllSelected = true;
+        RecalcSelectedSize();
+        OnPropertyChanged(nameof(BackupSizeInfo));
+    }
+
+    [RelayCommand]
+    private void DeselectAll()
+    {
+        _isBulkUpdating = true;
+        try
+        {
+            foreach (var item in FoundItems) item.IsSelected = false;
+        }
+        finally
+        {
+            _isBulkUpdating = false;
+        }
+        AllSelected = false;
+        RecalcSelectedSize();
+        OnPropertyChanged(nameof(BackupSizeInfo));
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  BACKUP — wybór folderu
+    // ═════════════════════════════════════════════════════════════════════════
+    [RelayCommand]
+    private async Task ChooseBackupFolderAsync()
+    {
+        if (_topLevel?.StorageProvider is not { } sp) return;
+
+        var folders = await sp.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title       = "Wybierz folder na kopię zapasową",
+            AllowMultiple = false
+        });
+
+        if (folders.Count > 0)
+            BackupFolderPath = folders[0].Path.LocalPath;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  TYLKO KOPIA ZAPASOWA (bez usuwania)
+    // ═════════════════════════════════════════════════════════════════════════
+    [RelayCommand]
+    private async Task BackupOnlyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(BackupFolderPath)) return;
+
+        var toBackup = FoundItems.Where(i => i.IsSelected).ToList();
+        if (toBackup.Count == 0) return;
+
+        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        _cts = new CancellationTokenSource();
+
+        var currentToken = _cts.Token;
+
+        Phase              = AppPhase.BackingUp;
+        BackupProgressText = LanguageService.Instance["Backup_Preparing"];
+        CreatedManifestPath = string.Empty;
+
+        int done = 0;
+        var progress = new Progress<string>(p =>
+        {
+            done++;
+            BackupProgressText = $"[{done}/{toBackup.Count}]  {p}";
+        });
+
+        try
+        {
+            CreatedManifestPath = await BackupService.CreateBackupAsync(
+                SelectedPlugin!, toBackup, BackupFolderPath, progress, currentToken);
+        }
+        catch (OperationCanceledException)
+        {
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase = AppPhase.Results;
+            }
+            return;
+        }
+        catch (Exception ex)
+        {
+            CreatedManifestPath = string.Empty;
+            BackupProgressText  = $"Błąd: {ex.Message}";
+            try { await Task.Delay(2000, currentToken); } catch (OperationCanceledException) { }
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase = AppPhase.Results;
+            }
+            return;
+        }
+
+        // Wróć do wyników — pliki NIE zostały usunięte
+        Phase        = AppPhase.Done;
+        HasErrors    = false;
+        ErrorDetails = string.Empty;
+        DeletedCount = 0;
+        DeleteStatus = $"✓ Kopia zapasowa zapisana. Żaden plik nie został usunięty.";
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  USUWANIE (z opcjonalnym backupem)
+    // ═════════════════════════════════════════════════════════════════════════
+    [RelayCommand]
+    private async Task DeleteSelectedAsync()
+    {
+        var toDelete = FoundItems.Where(i => i.IsSelected).ToList();
+        if (toDelete.Count == 0) return;
+
+        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        _cts = new CancellationTokenSource();
+
+        var currentToken = _cts.Token;
+
+        // ── Krok 1: Backup (opcjonalnie) ─────────────────────────────────────
+        if (BackupEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(BackupFolderPath))
+            {
+                HasErrors = true;
+                ErrorDetails = LanguageService.Instance["Delete_FolderRequired"];
+                Phase = AppPhase.Done;
+                DeleteStatus = LanguageService.Instance["Delete_AbortedSafe"];
+                return;
+            }
+
+            Phase             = AppPhase.BackingUp;
+            BackupProgressText = LanguageService.Instance["Backup_Preparing"];
+            CreatedManifestPath = string.Empty;
+
+            int done = 0;
+            var backupProgress = new Progress<string>(p =>
+            {
+                done++;
+                BackupProgressText = $"[{done}/{toDelete.Count}]  {p}";
+            });
+
+            try
+            {
+                CreatedManifestPath = await BackupService.CreateBackupAsync(
+                    SelectedPlugin!, toDelete, BackupFolderPath, backupProgress, currentToken);
+            }
+            catch (OperationCanceledException)
+            {
+                if (_cts != null && _cts.Token == currentToken)
+                {
+                    Phase = AppPhase.Results;
+                }
+                return;
+            }
+            catch (Exception ex)
+            {
+                CreatedManifestPath = string.Empty;
+                BackupProgressText  = $"Błąd kopii: {ex.Message}";
+                try { await Task.Delay(2000, currentToken); } catch (OperationCanceledException) { }
+                if (_cts != null && _cts.Token == currentToken)
+                {
+                    Phase = AppPhase.Results;
+                }
+                return;
+            }
+        }
+
+        // ── Krok 2: Usuwanie ──────────────────────────────────────────────────
+        Phase        = AppPhase.Deleting;
+        DeleteStatus = "Usuwam zaznaczone elementy…";
+        HasErrors    = false;
+        ErrorDetails = string.Empty;
+
+        int delDone = 0;
+        var delProgress = new Progress<string>(p =>
+        {
+            delDone++;
+            DeleteProgress = $"[{delDone}/{toDelete.Count}]  {p}";
+        });
+
+        try
+        {
+            var result = await PluginScanner.DeleteAsync(toDelete, delProgress, currentToken);
+
+            DeletedCount = result.Deleted;
+            HasErrors    = result.Errors > 0;
+            ErrorDetails = result.Errors > 0
+                ? string.Join("\n", result.ErrorMessages)
+                : string.Empty;
+
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase        = AppPhase.Done;
+                DeleteStatus = result.Errors == 0
+                    ? $"✓ Usunięto {result.Deleted} element(ów) pomyślnie."
+                    : $"Usunięto {result.Deleted}, błędów: {result.Errors}.";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase = AppPhase.Results;
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  PRZYWRACANIE — nawigacja i wybór manifestu
+    // ═════════════════════════════════════════════════════════════════════════
+    [RelayCommand]
+    private void GoToRestore()
+    {
+        Phase           = AppPhase.RestoreSelect;
+        ManifestFilePath = string.Empty;
+        LoadedManifest  = null;
+    }
+
+    [RelayCommand]
+    private async Task ChooseManifestFileAsync()
+    {
+        if (_topLevel?.StorageProvider is not { } sp) return;
+
+        var files = await sp.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title         = "Wybierz plik manifestu kopii (VSTDeleter_manifest.json)",
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Manifest VST Deleter")
+                    { Patterns = new[] { "VSTDeleter_manifest.json", "*.json" } },
+                new FilePickerFileType("Wszystkie pliki")
+                    { Patterns = new[] { "*" } }
+            }
+        });
+
+        if (files.Count == 0) return;
+
+        ManifestFilePath = files[0].Path.LocalPath;
+        TryLoadManifest();
+    }
+
+    /// <summary>
+    /// Ładuje manifest z bieżącej ManifestFilePath i przechodzi do ekranu podglądu.
+    /// </summary>
+    [RelayCommand]
+    private void LoadManifestAndReview()
+    {
+        TryLoadManifest();
+        if (HasLoadedManifest)
+            Phase = AppPhase.RestoreReview;
+    }
+
+    private void TryLoadManifest()
+    {
+        if (string.IsNullOrWhiteSpace(ManifestFilePath)) return;
+        LoadedManifest = BackupService.LoadManifest(ManifestFilePath);
+
+        if (LoadedManifest == null)
+            ManifestFilePath = "⚠ Nie można wczytać pliku — sprawdź czy to poprawny manifest VST Deleter.";
+    }
+
+    /// <summary>Ładuje manifest na podstawie ścieżki manifestu z właśnie zakończonego backupu.</summary>
+    [RelayCommand]
+    private void LoadCreatedManifestAndReview()
+    {
+        if (string.IsNullOrWhiteSpace(CreatedManifestPath)) return;
+        ManifestFilePath = CreatedManifestPath;
+        LoadedManifest   = BackupService.LoadManifest(CreatedManifestPath);
+        if (HasLoadedManifest)
+            Phase = AppPhase.RestoreReview;
+    }
+
+    [RelayCommand]
+    private void BackToRestoreSelect()
+    {
+        Phase = AppPhase.RestoreSelect;
+    }
+
+    [RelayCommand]
+    private void BackToSearchFromRestore()
+    {
+        Phase            = AppPhase.Search;
+        LoadedManifest   = null;
+        ManifestFilePath = string.Empty;
+        RestoreStatus    = string.Empty;
+        RestoreErrorDetails = string.Empty;
+        RestoreHasErrors = false;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  PRZYWRACANIE — właściwe
+    // ═════════════════════════════════════════════════════════════════════════
+    [RelayCommand]
+    private async Task StartRestoreAsync()
+    {
+        if (LoadedManifest == null) return;
+
+        Phase              = AppPhase.Restoring;
+        RestoreStatus      = "Przywracam pliki...";
+        RestoreHasErrors   = false;
+        RestoreErrorDetails = string.Empty;
+        AppLogs.Clear();
+
+        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        _cts = new CancellationTokenSource();
+
+        var currentToken = _cts.Token;
+
+        int done = 0;
+        int total = LoadedManifest.Entries.Count;
+        var progress = new Progress<string>(p =>
+        {
+            done++;
+            RestoreProgressText = $"[{done}/{total}]  {p}";
+        });
+
+        try
+        {
+            var result = await BackupService.RestoreBackupAsync(
+                LoadedManifest, progress, currentToken);
+
+            RestoredCount       = result.Restored;
+            
+            if (result.Errors == 0)
+            {
+                if (result.Skipped > 0)
+                {
+                    RestoreStatus = $"✓ Przywrócono {result.Restored} plików. (Pominięto {result.Skipped} chronionych przez SIP)";
+                }
+                else
+                {
+                    RestoreStatus = $"✓ Przywrócono {result.Restored} element(ów) pomyślnie.";
+                }
+            }
+            else
+            {
+                RestoreHasErrors = true;
+                RestoreStatus = $"Przywrócono {result.Restored}, błędów: {result.Errors}, pominięto: {result.Skipped}.";
+                RestoreErrorDetails = string.Join("\n", result.ErrorMessages);
+            }
+
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase         = AppPhase.RestoreDone;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase = AppPhase.RestoreSelect;
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  RESET / NAWIGACJA
+    // ═════════════════════════════════════════════════════════════════════════
+    [RelayCommand]
+    private void Reset()
+    {
+        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); _cts = null; }
+        Phase              = AppPhase.Search;
+        SearchText         = string.Empty;
+        SelectedPlugin     = null;
+        ShowSuggestions    = false;
+        FoundItems.Clear();
+        AppLogs.Clear();
+        HasResults         = false;
+        HasErrors          = false;
+        ErrorDetails       = string.Empty;
+        DeleteStatus       = string.Empty;
+        ScanStatus         = string.Empty;
+        TotalSizeLabel     = string.Empty;
+        SelectedSizeLabel  = string.Empty;
+        BackupEnabled      = false;
+        BackupFolderPath   = string.Empty;
+        BackupProgressText = string.Empty;
+        CreatedManifestPath = string.Empty;
+        LoadedManifest     = null;
+        ManifestFilePath   = string.Empty;
+        RestoreStatus      = string.Empty;
+        RestoreErrorDetails = string.Empty;
+        RestoreHasErrors   = false;
+    }
+
+    [RelayCommand]
+    private void BackToResults()
+    {
+        Phase = AppPhase.Results;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  HELPERS
+    // ═════════════════════════════════════════════════════════════════════════
+    private void RecalcTotalSize()
+    {
+        long total = FoundItems.Sum(i => i.SizeBytes);
+        TotalSizeLabel = FormatSize(total);
+    }
+
+    private void RecalcSelectedSize()
+    {
+        long sel = FoundItems.Where(i => i.IsSelected).Sum(i => i.SizeBytes);
+        SelectedSizeLabel = FormatSize(sel);
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024)                  return $"{bytes} B";
+        if (bytes < 1024 * 1024)          return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024L * 1024 * 1024)  return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+    }
+
+    private static string ShortenPath(string path)
+    {
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string s = path.StartsWith(home) ? "~" + path[home.Length..] : path;
+        return s.Length > 55 ? "…" + s[^52..] : s;
+    }
+}
+
+--- NAZWA PLIKU: ./ViewLocator.cs ---
+using System;
+using System.Diagnostics.CodeAnalysis;
+using Avalonia.Controls;
+using Avalonia.Controls.Templates;
+using VstDeleter.ViewModels;
+
+namespace VstDeleter;
+
+/// <summary>
+/// Given a view model, returns the corresponding view if possible.
+/// </summary>
+[RequiresUnreferencedCode(
+    "Default implementation of ViewLocator involves reflection which may be trimmed away.",
+    Url = "https://docs.avaloniaui.net/docs/concepts/view-locator")]
+public class ViewLocator : IDataTemplate
+{
+    public Control? Build(object? param)
+    {
+        if (param is null)
+            return null;
+        
+        var name = param.GetType().FullName!.Replace("ViewModel", "View", StringComparison.Ordinal);
+        var type = Type.GetType(name);
+
+        if (type != null)
+        {
+            return (Control)Activator.CreateInstance(type)!;
+        }
+        
+        return new TextBlock { Text = "Not Found: " + name };
+    }
+
+    public bool Match(object? data)
+    {
+        return data is ViewModelBase;
+    }
+}
+
+--- NAZWA PLIKU: ./Models/InstalledPlugin.cs ---
+using System.Collections.Generic;
+
+namespace VstDeleter.Models;
+
+public record InstalledPlugin(string Name, List<string> Formats);
+
+--- NAZWA PLIKU: ./Models/BackupManifest.cs ---
+using System.Text.Json.Serialization;
+
+namespace VstDeleter.Models;
+
+/// <summary>
+/// Manifest kopii zapasowej — zapisywany jako czytelny JSON w folderze kopii.
+/// Pozwala na ręczne przywrócenie plików bez użycia programu.
+/// </summary>
+public class BackupManifest
+{
+    [JsonPropertyName("_info")]
+    public string Info { get; init; } =
+        "Kopia zapasowa VST Deleter. " +
+        "Aby przywrócić ręcznie: dla każdego wpisu skopiuj plik/katalog " +
+        "z lokalizacji <backupFolder>/<backupRelativePath> " +
+        "z powrotem do <originalAbsolutePath>.";
+
+    [JsonPropertyName("schemaVersion")]
+    public string SchemaVersion { get; init; } = "1.0";
+
+    [JsonPropertyName("pluginName")]
+    public string PluginName { get; init; } = string.Empty;
+
+    [JsonPropertyName("created")]
+    public DateTimeOffset Created { get; init; } = DateTimeOffset.Now;
+
+    [JsonPropertyName("backupFolder")]
+    public string BackupFolder { get; set; } = string.Empty;
+
+    [JsonPropertyName("totalEntries")]
+    public int TotalEntries => Entries.Count;
+
+    [JsonPropertyName("entries")]
+    public List<BackupEntry> Entries { get; init; } = new();
+}
+
+/// <summary>
+/// Jeden wpis w manifeście — opisuje jeden plik lub katalog.
+/// </summary>
+public partial class BackupEntry : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
+{
+    /// <summary>Oryginalna, absolutna ścieżka na dysku (cel przywrócenia).</summary>
+    [JsonPropertyName("originalAbsolutePath")]
+    public string OriginalAbsolutePath { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Ścieżka relatywna wewnątrz folderu kopii.
+    /// Pełna lokalizacja kopii = backupFolder + "/" + backupRelativePath.
+    /// </summary>
+    [JsonPropertyName("backupRelativePath")]
+    public string BackupRelativePath { get; init; } = string.Empty;
+
+    /// <summary>"file" lub "directory".</summary>
+    [JsonPropertyName("type")]
+    public string Type { get; init; } = "file";
+
+    /// <summary>Kategoria wykryta przez skaner (np. "VST3 (systemowy)").</summary>
+    [JsonPropertyName("category")]
+    public string Category { get; init; } = string.Empty;
+
+    [JsonIgnore] public string CategoryTranslated => Services.LanguageService.Instance[Category];
+
+    public BackupEntry()
+    {
+        Services.LanguageService.Instance.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == "CurrentLanguage" || e.PropertyName == "Item")
+            {
+                OnPropertyChanged(nameof(CategoryTranslated));
+            }
+        };
+    }
+
+    /// <summary>Rozmiar w bajtach.</summary>
+    [JsonPropertyName("sizeBytes")]
+    public long SizeBytes { get; init; }
+
+    // ── Pomocnicze (nie serializowane) ────────────────────────────────────────
+    [JsonIgnore] public string TypeIcon => Type == "directory" ? "📁" : "📄";
+    [JsonIgnore] public string SizeFormatted => FormatSize(SizeBytes);
+    [JsonIgnore] public string ShortOriginalPath
+    {
+        get
+        {
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string p = OriginalAbsolutePath.StartsWith(home)
+                ? "~" + OriginalAbsolutePath[home.Length..]
+                : OriginalAbsolutePath;
+            return p.Length > 60 ? "…" + p[^57..] : p;
+        }
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024)                  return $"{bytes} B";
+        if (bytes < 1024 * 1024)          return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024L * 1024 * 1024)  return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+    }
+}
+
+--- NAZWA PLIKU: ./Models/FoundItem.cs ---
+using CommunityToolkit.Mvvm.ComponentModel;
+
+namespace VstDeleter.Models;
+
+public partial class FoundItem : ObservableObject
+{
+    [ObservableProperty] private bool _isSelected = true;
+
+    public string Path { get; init; } = string.Empty;
+    public bool IsDirectory { get; init; }
+    public long SizeBytes { get; init; }
+
+    public string SizeFormatted => FormatSize(SizeBytes);
+
+    public string TypeLabel => IsDirectory ? "katalog" : "plik";
+    public string TypeIcon  => IsDirectory ? "📁" : "📄";
+
+    public string ShortPath
+    {
+        get
+        {
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return Path.StartsWith(home)
+                ? "~" + Path[home.Length..]
+                : Path;
+        }
+    }
+
+    // Category for grouping in the UI
+    public string Category { get; init; } = "Inne";
+    public string CategoryTranslated => Services.LanguageService.Instance[Category];
+
+    public FoundItem()
+    {
+        Services.LanguageService.Instance.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == "CurrentLanguage" || e.PropertyName == "Item")
+            {
+                OnPropertyChanged(nameof(CategoryTranslated));
+                OnPropertyChanged(nameof(TypeLabel));
+            }
+        };
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024)              return $"{bytes} B";
+        if (bytes < 1024 * 1024)      return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+    }
+}
+
+--- NAZWA PLIKU: ./App.axaml.cs ---
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Markup.Xaml;
+using VstDeleter.Views;
+
+namespace VstDeleter;
+
+public partial class App : Application
+{
+    public override void Initialize()
+    {
+        AvaloniaXamlLoader.Load(this);
+    }
+
+    public override void OnFrameworkInitializationCompleted()
+    {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.MainWindow = new MainWindow();
+        }
+
+        base.OnFrameworkInitializationCompleted();
+    }
+}
+--- NAZWA PLIKU: ./Views/MainWindow.axaml.cs ---
+using Avalonia.Controls;
+using Avalonia.Input;
+using VstDeleter.ViewModels;
+
+namespace VstDeleter.Views;
+
+public partial class MainWindow : Window
+{
+    public MainWindow()
+    {
+        InitializeComponent();
+
+        var vm = new MainViewModel();
+        vm.SetTopLevel(this);
+        DataContext = vm;
+
+        // Przeciąganie okna za pasek tytułu
+        if (this.FindControl<Border>("TitleBarDragZone") is { } drag)
+        {
+            drag.PointerPressed += (_, e) =>
+            {
+                if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+                    BeginMoveDrag(e);
+            };
+        }
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        if (DataContext is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+    }
+}
+--- NAZWA PLIKU: ./Services/PluginScanner.cs ---
+using VstDeleter.Models;
+
+namespace VstDeleter.Services;
+
+/// <summary>
+/// Skanuje system macOS w poszukiwaniu śladów po wtyczce.
+/// </summary>
+public static class PluginScanner
+{
+    public static async Task<List<FoundItem>> ScanAsync(
+        string pluginName,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(pluginName) || pluginName.Trim().Length < 2)
+            throw new ArgumentException(LanguageService.Instance["Err_TooShort"]);
+
+        string[] invalidChars = { "/", "\\", ".", "*", "?", "<", ">", "|", ":" };
+        foreach (var c in invalidChars)
+        {
+            if (pluginName.Contains(c))
+                throw new ArgumentException($"{LanguageService.Instance["Err_InvalidChars"]}: {c}");
+        }
+
+        return await Task.Run(() => Scan(pluginName, progress, ct), ct);
+    }
+
+    private static List<FoundItem> Scan(
+        string pluginName,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var variants = BuildNameVariants(pluginName).ToList();
+        var candidates = BuildCandidatePaths(pluginName, variants, home, ct);
+
+        var found = new List<FoundItem>();
+
+        foreach (var (path, category) in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                bool isDir  = Directory.Exists(path);
+                bool isFile = !isDir && File.Exists(path);
+
+                if (!isDir && !isFile) continue;
+
+                progress?.Report(path);
+
+                long size = isDir ? GetDirectorySize(path, ct) : new FileInfo(path).Length;
+                found.Add(new FoundItem
+                {
+                    Path        = path,
+                    IsDirectory = isDir,
+                    SizeBytes   = size,
+                    Category    = category,
+                    IsSelected  = category.StartsWith("Wtyczka") || category == "Aplikacja"
+                });
+            }
+            catch (UnauthorizedAccessException ex) { AppLogger.Log($"[ScanAsync Brak dostępu]: {ex.ToString()}"); }
+            catch (IOException ex)                 { AppLogger.Log($"[ScanAsync Błąd I/O]: {ex.ToString()}"); }
+            catch (Exception ex)                   { AppLogger.Log($"[ScanAsync Błąd ogólny]: {ex.ToString()}"); }
+        }
+
+        return found;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Budowanie listy ścieżek z kategoriami
+    // ─────────────────────────────────────────────────────────────────────────
+    private static IEnumerable<(string path, string category)> BuildCandidatePaths(
+        string pluginName, List<string> variants, string home, CancellationToken ct)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(List<(string, string)> list, string path, string cat)
+        {
+            string p = path.TrimEnd('/');
+            if (p.Equals($"{home}/.Trash", StringComparison.OrdinalIgnoreCase) ||
+                p.Equals($"{home}/.ssh", StringComparison.OrdinalIgnoreCase) ||
+                p.Equals($"{home}/.config", StringComparison.OrdinalIgnoreCase) ||
+                p.Equals($"{home}/.local", StringComparison.OrdinalIgnoreCase) ||
+                p.Equals("/Applications/Utilities", StringComparison.OrdinalIgnoreCase) ||
+                p.Equals("/Library", StringComparison.OrdinalIgnoreCase) ||
+                p.Equals($"{home}/Library", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (seen.Add(path)) list.Add((path, cat));
+        }
+
+        var result = new List<(string, string)>();
+
+        foreach (string v in variants)
+        {
+            // VST2
+            Add(result, $"/Library/Audio/Plug-Ins/VST/{v}.vst",               "VST2 (systemowy)");
+            Add(result, $"{home}/Library/Audio/Plug-Ins/VST/{v}.vst",         "VST2 (użytkownik)");
+
+            // VST3
+            Add(result, $"/Library/Audio/Plug-Ins/VST3/{v}.vst3",             "VST3 (systemowy)");
+            Add(result, $"{home}/Library/Audio/Plug-Ins/VST3/{v}.vst3",       "VST3 (użytkownik)");
+
+            // AU / AudioUnit
+            Add(result, $"/Library/Audio/Plug-Ins/Components/{v}.component",  "AudioUnit (systemowy)");
+            Add(result, $"{home}/Library/Audio/Plug-Ins/Components/{v}.component", "AudioUnit (użytkownik)");
+
+            // CLAP
+            Add(result, $"/Library/Audio/Plug-Ins/CLAP/{v}.clap",             "CLAP (systemowy)");
+            Add(result, $"{home}/Library/Audio/Plug-Ins/CLAP/{v}.clap",       "CLAP (użytkownik)");
+
+            // AAX (Pro Tools)
+            Add(result, $"/Library/Application Support/Avid/Audio/Plug-Ins/{v}.aaxplugin",        "AAX / Pro Tools");
+            Add(result, $"{home}/Library/Application Support/Avid/Audio/Plug-Ins/{v}.aaxplugin",  "AAX / Pro Tools (użytkownik)");
+
+            // Shared — biblioteki brzmień (NI, Arturia, Spectrasonics itp.)
+            Add(result, $"/Users/Shared/{v}",  "Biblioteka brzmień (Shared)");
+
+            // Application Support
+            Add(result, $"{home}/Library/Application Support/{v}",            "Ustawienia / dane");
+            Add(result, $"/Library/Application Support/{v}",                  "Ustawienia / dane");
+            Add(result, $"{home}/Library/Application Support/Native Instruments/{v}", "Native Instruments");
+            Add(result, $"{home}/Library/Application Support/Steinberg/{v}",  "Steinberg");
+
+            // Preferences / plist
+            Add(result, $"{home}/Library/Preferences/{v}.plist",              "Preferencje");
+            Add(result, $"{home}/Library/Preferences/com.{Slug(v)}.plist",    "Preferencje");
+            Add(result, $"{home}/Library/Preferences/com.native-instruments.{Slug(v)}.plist", "Preferencje NI");
+
+            // Ukryte pliki licencji w katalogu domowym
+            Add(result, $"{home}/.{v}",                  "Plik licencji (ukryty)");
+            Add(result, $"{home}/.{v.Replace(" ", "")}",  "Plik licencji (ukryty)");
+            Add(result, $"{home}/.{v.Replace(" ", "_")}",  "Plik licencji (ukryty)");
+            Add(result, $"{home}/.{v.ToLower()}",          "Plik licencji (ukryty)");
+            Add(result, $"{home}/.{Slug(v)}",              "Plik licencji (ukryty)");
+
+            // Cache i logi
+            Add(result, $"{home}/Library/Logs/{v}",                           "Logi");
+            Add(result, $"{home}/Library/Caches/{v}",                         "Cache");
+            Add(result, $"{home}/Library/Caches/com.{Slug(v)}",               "Cache");
+
+            // Receipts pkgutil
+            Add(result, $"/var/db/receipts/com.{Slug(v)}.pkg.bom",            "Receipt (pkgutil)");
+            Add(result, $"/var/db/receipts/com.{Slug(v)}.pkg.plist",          "Receipt (pkgutil)");
+
+            // Presets audio
+            Add(result, $"/Library/Audio/Presets/{v}",                        "Presety audio");
+            Add(result, $"{home}/Library/Audio/Presets/{v}",                  "Presety audio");
+            Add(result, $"/Library/Audio/Sounds/{v}",                         "Dźwięki / samples");
+            Add(result, $"{home}/Library/Audio/Sounds/{v}",                   "Dźwięki / samples");
+
+            // Dokumenty
+            Add(result, $"{home}/Documents/{v}",                              "Dokumenty");
+
+            // Aplikacje
+            Add(result, $"/Applications/{v}.app",                             "Aplikacja");
+            Add(result, $"{home}/Applications/{v}.app",                       "Aplikacja");
+        }
+
+        // --- 4. Skanowanie "dynamiczne" głębokie (MaxDepth = 2) ---
+        string norm = pluginName.Replace(" ", "");
+        if (norm.Length >= 4)
+        {
+            string searchTerm = norm.ToLower();
+            string[] scanDirs = {
+                "/var/db/receipts",
+                $"{home}/Library/Preferences",
+                "/Library/Audio/Presets",
+                $"{home}/Library/Audio/Presets",
+                "/Library/Application Support",
+                $"{home}/Library/Application Support",
+                "/Users/Shared"
+            };
+
+            var options = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true, MaxRecursionDepth = 2 };
+
+            foreach (var dir in scanDirs)
+            {
+                if (!Directory.Exists(dir)) continue;
+
+                try
+                {
+                    foreach (var path in Directory.EnumerateFileSystemEntries(dir, "*", options))
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        
+                        string fileName = Path.GetFileName(path).ToLower();
+
+                        // Systemowa Czarna Lista (Blacklist)
+                        if (fileName.StartsWith("com.apple.") || 
+                            fileName.StartsWith("org.cups.") || 
+                            fileName.StartsWith("com.microsoft."))
+                        {
+                            continue;
+                        }
+
+                        if (fileName.Contains(searchTerm))
+                        {
+                            string category = "Plik konfiguracyjny / Log";
+                            if (dir.Contains("Presets", StringComparison.OrdinalIgnoreCase))
+                                category = "Presety audio / Banki";
+                            else if (dir.Contains("Application Support", StringComparison.OrdinalIgnoreCase) || dir.Contains("Shared", StringComparison.OrdinalIgnoreCase))
+                                category = "Biblioteka brzmień / Baza danych";
+                                
+                            Add(result, path, category);
+                        }
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { AppLogger.Log($"[BuildPaths Dynamic Scan]: {ex.ToString()}"); }
+            }
+        }
+
+        return result;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Warianty nazwy
+    // ─────────────────────────────────────────────────────────────────────────
+    private static IEnumerable<string> BuildNameVariants(string name)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void A(string s) { if (!string.IsNullOrWhiteSpace(s)) set.Add(s.Trim()); }
+
+        A(name);
+        A(name.Replace(" ", ""));
+        A(name.Replace(" ", "-"));
+        A(name.Replace(" ", "_"));
+        A(name.ToLower());
+        A(name.ToLower().Replace(" ", ""));
+        A(name.ToLower().Replace(" ", "-"));
+        A(name.ToLower().Replace(" ", "_"));
+        A(name.ToUpper());
+        A(name.ToUpper().Replace(" ", ""));
+
+
+
+        return set;
+    }
+
+    private static string Slug(string s) =>
+        s.ToLower().Replace(" ", "-");
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Rozmiar katalogu
+    // ─────────────────────────────────────────────────────────────────────────
+    private static long GetDirectorySize(string path, CancellationToken ct)
+    {
+        long total = 0;
+        try
+        {
+            var options = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true };
+            foreach (string f in Directory.EnumerateFiles(path, "*", options))
+            {
+                ct.ThrowIfCancellationRequested();
+                try { total += new FileInfo(f).Length; } 
+                catch (Exception ex) { AppLogger.Log($"[GetDirectorySize]: {ex.ToString()}"); }
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { AppLogger.Log($"[GetDirectorySize Pętla]: {ex.ToString()}"); }
+        return total;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Usuwanie
+    // ─────────────────────────────────────────────────────────────────────────
+    public static async Task<DeleteResult> DeleteAsync(
+        IEnumerable<FoundItem> items,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(async () =>
+        {
+            int ok = 0, errors = 0;
+            var errorMessages = new List<string>();
+            var sudoPaths = new List<string>();
+
+            foreach (var item in items)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    progress?.Report(item.ShortPath);
+                    if (item.IsDirectory)
+                        Directory.Delete(item.Path, recursive: true);
+                    else
+                        File.Delete(item.Path);
+                    ok++;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    sudoPaths.Add(item.Path);
+                }
+                catch (DirectoryNotFoundException ex) { ok++; AppLogger.Log($"[DeleteAsync Brak ścieżki]: {ex.ToString()}"); }
+                catch (FileNotFoundException ex)      { ok++; AppLogger.Log($"[DeleteAsync Brak pliku]: {ex.ToString()}"); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    errors++;
+                    errorMessages.Add($"{item.ShortPath}: {ex.Message}");
+                    AppLogger.Log($"[DeleteAsync błąd na pliku]: {ex.ToString()}");
+                }
+            }
+
+            if (sudoPaths.Count > 0)
+            {
+                try
+                {
+                    progress?.Report("Wymagane uprawnienia administratora (sprawdź monit systemowy)...");
+                    var bashLines = new List<string>();
+                    var rmPaths = new List<string>();
+
+                    foreach (var path in sudoPaths)
+                    {
+                        if (path.Contains("/var/db/receipts/", StringComparison.OrdinalIgnoreCase) ||
+                            path.Contains("/private/var/db/receipts/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string fileName = Path.GetFileName(path);
+                            if (fileName.EndsWith(".bom") || fileName.EndsWith(".plist"))
+                            {
+                                string ext = fileName.EndsWith(".bom") ? ".bom" : ".plist";
+                                string pkgId = fileName.Substring(0, fileName.Length - ext.Length);
+                                
+                                bashLines.Add($"pkgutil --forget '{pkgId.Replace("'", "'\\''")}' || true");
+                            }
+                        }
+                        else
+                        {
+                            rmPaths.Add(path);
+                        }
+                    }
+
+                    foreach (var p in rmPaths)
+                    {
+                        bashLines.Add($"rm -rf '{p.Replace("'", "'\\''")}'");
+                    }
+
+                    string bashCommand = string.Join(" ; ", bashLines);
+                    string scriptPath = Path.GetTempFileName();
+                    
+                    try
+                    {
+                        await File.WriteAllTextAsync(scriptPath, bashCommand, ct);
+
+                        var psi = new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "osascript",
+                            UseShellExecute = false,
+                            RedirectStandardOutput = false,
+                            RedirectStandardError = true
+                        };
+                        
+                        psi.ArgumentList.Add("-e");
+                        psi.ArgumentList.Add("on run argv");
+                        psi.ArgumentList.Add("-e");
+                        psi.ArgumentList.Add("do shell script \"/bin/sh '\" & item 1 of argv & \"'\" with administrator privileges");
+                        psi.ArgumentList.Add("-e");
+                        psi.ArgumentList.Add("end run");
+                        psi.ArgumentList.Add(scriptPath);
+                        
+                        using var proc = System.Diagnostics.Process.Start(psi);
+                        if (proc != null)
+                        {
+                            string err = await proc.StandardError.ReadToEndAsync();
+                            await proc.WaitForExitAsync();
+                            if (proc.ExitCode == 0)
+                            {
+                                ok += sudoPaths.Count;
+                            }
+                            else
+                            {
+                                errors += sudoPaths.Count;
+                                errorMessages.Add($"Odmowa dostępu / błąd sudo: {err.Trim()}");
+                            }
+                        }
+                        else
+                        {
+                            errors += sudoPaths.Count;
+                            errorMessages.Add("Nie udało się uruchomić osascript.");
+                        }
+                    }
+                    finally
+                    {
+                        if (File.Exists(scriptPath)) File.Delete(scriptPath);
+                    }
+                }
+                catch (System.ComponentModel.Win32Exception ex)
+                {
+                    errors += sudoPaths.Count;
+                    errorMessages.Add($"Brak programu osascript w systemie: {ex.Message}");
+                    AppLogger.Log($"[delete sudo] osascript missing: {ex.ToString()}");
+                }
+                catch (InvalidOperationException ex)
+                {
+                    errors += sudoPaths.Count;
+                    errorMessages.Add($"Błąd procesu sudo: {ex.Message}");
+                    AppLogger.Log($"[delete sudo] process error: {ex.ToString()}");
+                }
+                catch (Exception ex)
+                {
+                    errors += sudoPaths.Count;
+                    errorMessages.Add($"Nieoczekiwany błąd podczas próby sudo: {ex.Message}");
+                    AppLogger.Log($"[delete sudo] unexpected: {ex.ToString()}");
+                }
+            }
+
+            return new DeleteResult(ok, errors, errorMessages);
+        }, ct);
+    }
+}
+
+public record DeleteResult(int Deleted, int Errors, List<string> ErrorMessages);
+
+--- NAZWA PLIKU: ./Services/PluginDatabase.cs ---
+namespace VstDeleter.Services;
+
+/// <summary>
+/// Baza znanych wtyczek VST/AU z sugestiami dla autouzupełniania.
+/// </summary>
+public static class PluginDatabase
+{
+    public static readonly IReadOnlyList<string> KnownPlugins = new[]
+    {
+        // ── Native Instruments ───────────────────────────────────────────────
+        "Guitar Rig 6", "Guitar Rig 7",
+        "Kontakt 7", "Kontakt 6", "Kontakt 5",
+        "Massive X", "Massive",
+        "Battery 4",
+        "Reaktor 6",
+        "Absynth 5",
+        "FM8",
+        "Razor",
+        "Monark",
+        "Rounds",
+        "Prism",
+        "Skanner XT",
+        "Blocks",
+        "Replika XT", "Replika",
+        "Supercharger GT", "Supercharger",
+        "Raum",
+        "Phasis",
+        "Flair",
+        "Choral",
+        "Solid Bus Comp", "Solid Dynamics", "Solid EQ", "Solid Limiter",
+        "VC 2A", "VC 76", "VC 160",
+        "Transient Master",
+        "Vari Comp",
+        "Driver",
+        "Form",
+        "Retro Machines MK2",
+        "Session Strings Pro 2",
+        "Vintage Organs",
+        "Native Access",
+        "Komplete Kontrol",
+        "Maschine",
+        "Traktor",
+
+        // ── Xfer Records ────────────────────────────────────────────────────
+        "Serum",
+        "LFO Tool",
+        "Cthulhu",
+        "Nerve",
+        "Dimension Expander",
+
+        // ── Spectrasonics ────────────────────────────────────────────────────
+        "Omnisphere 2",
+        "Trilian",
+        "Keyscape",
+        "Stylus RMX",
+
+        // ── iZotope ─────────────────────────────────────────────────────────
+        "Ozone 11", "Ozone 10", "Ozone 9",
+        "Neutron 4", "Neutron 3",
+        "RX 10", "RX 9", "RX 8",
+        "Nectar 3",
+        "Iris 2",
+        "Trash 2",
+        "Stutter Edit 2",
+        "BreakTweaker",
+        "VocalSynth 2",
+        "Spire Studio",
+        "Relay",
+        "Imager",
+        "Dialogue Match",
+        "Exponential Audio R4",
+
+        // ── FabFilter ───────────────────────────────────────────────────────
+        "FabFilter Pro-Q 3", "FabFilter Pro-Q 4",
+        "FabFilter Pro-MB",
+        "FabFilter Saturn 2",
+        "FabFilter Twin 3",
+        "FabFilter Timeless 3",
+        "FabFilter Volcano 3",
+        "FabFilter Pro-R 2",
+        "FabFilter Pro-G",
+        "FabFilter Pro-C 2",
+        "FabFilter Pro-DS",
+        "FabFilter Pro-L 2",
+        "FabFilter Micro",
+        "FabFilter One",
+        "FabFilter Simplon",
+
+        // ── Arturia ──────────────────────────────────────────────────────────
+        "Arturia V Collection",
+        "Arturia Analog Lab",
+        "Arturia Mini V3",
+        "Arturia Matrix-12 V2",
+        "Arturia Wurli V3",
+        "Arturia Stage-73 V2",
+        "Arturia Farfisa V2",
+        "Arturia Solina V2",
+        "Arturia Jup-8 V4",
+        "Arturia SEM V2",
+        "Arturia OB-Xa V3",
+        "Arturia Prophet-5 V2",
+        "Arturia CS-80 V3",
+        "Arturia ARP 2600 V3",
+        "Arturia Synclavier V",
+        "Arturia Buchla Easel V",
+        "Arturia DX7 V",
+        "Arturia CMI V",
+        "Arturia Vocoder V",
+        "Arturia Pigments",
+        "Arturia MiniFreak V",
+        "Arturia ACID V",
+        "Arturia Korg MS-20 V",
+
+        // ── Waves ────────────────────────────────────────────────────────────
+        "Waves Central",
+        "Waves SSL 4000 Collection",
+        "Waves CLA-2A",
+        "Waves CLA-3A",
+        "Waves CLA-76",
+        "Waves H-Delay",
+        "Waves H-Reverb",
+        "Waves Abbey Road",
+        "Waves L3-16 Multimaximizer",
+        "Waves Vocal Rider",
+        "Waves Tune Real-Time",
+        "Waves NS1 Noise Suppressor",
+        "Waves OVox",
+        "Waves Silk Vocals",
+        "Waves Butch Vig",
+        "Waves Eddie Kramer",
+        "Waves Tony Maserati",
+        "Waves Renaissance EQ",
+        "Waves API Collection",
+
+        // ── SoundToys ────────────────────────────────────────────────────────
+        "SoundToys EchoBoy",
+        "SoundToys Decapitator",
+        "SoundToys PrimalTap",
+        "SoundToys MicroShift",
+        "SoundToys Crystallizer",
+        "SoundToys Effectrix",
+        "SoundToys FilterFreak",
+        "SoundToys PhaseMistress",
+        "SoundToys Tremolator",
+        "SoundToys Radiator",
+        "SoundToys Little AlterBoy",
+        "SoundToys Little Plate",
+        "SoundToys Devil-Loc",
+        "SoundToys Rack",
+        "SoundToys Panman",
+        "SoundToys 5",
+
+        // ── Valhalla DSP ─────────────────────────────────────────────────────
+        "Valhalla Room",
+        "Valhalla VintageVerb",
+        "Valhalla Delay",
+        "Valhalla Shimmer",
+        "Valhalla Plate",
+        "Valhalla Supermassive",
+        "Valhalla SpaceModulator",
+
+        // ── UAD / Universal Audio ────────────────────────────────────────────
+        "UAD Console",
+        "UAD Oxide Tape",
+        "UAD Neve 1073",
+        "UAD API 2500",
+        "UAD Empirical Labs FATSO",
+        "UAD Century Tube Channel Strip",
+        "UAD 1176 Classic Limiter",
+        "UAD LA-2A Classic Limiter",
+        "UAD Pultec EQP-1A",
+        "UAD Ampex ATR-102",
+
+        // ── Slate Digital ────────────────────────────────────────────────────
+        "Slate Digital VCC",
+        "Slate Digital VTM",
+        "Slate Digital Virtual Mix Rack",
+        "Slate Digital Fresh Air",
+        "Slate Digital Custom Series",
+        "Slate Digital Alchemy",
+        "Slate Digital Trigger 2",
+        "Slate Digital Dragon",
+
+        // ── Eventide ─────────────────────────────────────────────────────────
+        "Eventide H3000 Factory",
+        "Eventide H910 Harmonizer",
+        "Eventide UltraChannel",
+        "Eventide Fission",
+        "Eventide Blackhole",
+        "Eventide Physion",
+        "Eventide EChannel",
+        "Eventide 2016 Stereo Room",
+
+        // ── Antares ──────────────────────────────────────────────────────────
+        "Antares Auto-Tune Pro",
+        "Antares Auto-Tune Realtime Advanced",
+        "Antares AVOX",
+        "Antares Harmony Engine",
+        "Antares Articulator",
+        "Antares Choir",
+
+        // ── Celemony ─────────────────────────────────────────────────────────
+        "Melodyne 5 Studio",
+        "Melodyne 5 Editor",
+        "Melodyne 5 Essential",
+
+        // ── Plugin Alliance ──────────────────────────────────────────────────
+        "ADPTR STREAMLINER",
+        "Brainworx bx_console",
+        "Vertigo VSC-2",
+        "Black Box Analog Design HG-2",
+        "Unfiltered Audio Sandman Pro",
+
+        // ── Spitfire Audio ───────────────────────────────────────────────────
+        "Spitfire LABS",
+        "Spitfire BBC Symphony Orchestra",
+        "Spitfire BBCSO Discover",
+        "Spitfire Albion One",
+
+        // ── Output ───────────────────────────────────────────────────────────
+        "Output Arcade",
+        "Output Portal",
+        "Output Exhaust",
+        "Output Movement",
+        "Output Signal",
+        "Output Substance",
+
+        // ── Steinberg ────────────────────────────────────────────────────────
+        "HALion",
+        "HALion Sonic",
+        "Groove Agent",
+        "Padshop",
+        "Retrologue",
+        "Mystic",
+        "Spector",
+        "Embracer",
+        "REVerence",
+        "VST Connect",
+
+        // ── Misc / Popular ────────────────────────────────────────────────────
+        "Sausage Fattener",
+        "Kickstart",
+        "Cableguys ShaperBox",
+        "Cableguys HalfTime",
+        "Cableguys Volume Shaper",
+        "Cableguys Pancake",
+        "Baby Audio Smooth Operator",
+        "Baby Audio Transit",
+        "Baby Audio Super VHS",
+        "Baby Audio IHNY-2",
+        "Vital",
+        "Surge XT",
+        "BBCSO Discover",
+        "AudioThing Springs",
+        "AudioThing Wires",
+        "Kilohearts Toolbox",
+        "Kilohearts Phase Plant",
+        "Kilohearts Snap Heap",
+        "Initial Audio Sektor",
+        "Tone2 Icarus",
+        "u-he Diva",
+        "u-he Hive 2",
+        "u-he Zebra 2",
+        "u-he Repro-1",
+        "u-he Repro-5",
+        "u-he ACE",
+        "u-he Bazille",
+        "u-he Podolski",
+        "u-he Tyrell N6",
+        "Reveal Sound Spire",
+        "Rob Papen Predator 3",
+        "Rob Papen Blue-II",
+        "Rob Papen BLADE-2",
+        "Rob Papen Go2",
+        "Lennar Digital Sylenth1",
+        "D16 Group LuSH-101",
+        "D16 Group Drumazon",
+        "D16 Group Nepheton",
+        "D16 Group Nithonat",
+        "D16 Group Phoscyon",
+        "D16 Group Tekturon",
+        "D16 Group PunchBOX",
+        "D16 Group Decimort 2",
+        "D16 Group Frontier",
+        "D16 Group Toraverb 2",
+        "Cymatics Diablo",
+        "KSHMR Karma",
+        "Loopmasters Loopcloud",
+        "Roland Cloud",
+        "Korg Collection",
+        "Moog Subsequent",
+        "Moog Model D",
+    };
+
+    public static readonly IReadOnlyList<string> KnownPluginsNormalized = KnownPlugins.Select(p => p.Replace(" ", "")).ToArray();
+
+    /// <summary>
+    /// Zwraca dopasowania do frazy wyszukiwania (max <paramref name="maxResults"/>).
+    /// </summary>
+    public static IEnumerable<string> Search(string query, int maxResults = 8)
+    {
+        if (string.IsNullOrWhiteSpace(query)) yield break;
+
+        string q = query.Trim().Replace(" ", "");
+        int count = 0;
+
+        // Najpierw te zaczynające się od frazy
+        for (int i = 0; i < KnownPlugins.Count; i++)
+        {
+            if (KnownPluginsNormalized[i].StartsWith(q, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return KnownPlugins[i];
+                if (++count >= maxResults) yield break;
+            }
+        }
+
+        // Potem zawierające frazę
+        for (int i = 0; i < KnownPlugins.Count; i++)
+        {
+            if (!KnownPluginsNormalized[i].StartsWith(q, StringComparison.OrdinalIgnoreCase)
+                && KnownPluginsNormalized[i].Contains(q, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return KnownPlugins[i];
+                if (++count >= maxResults) yield break;
+            }
+        }
+    }
+}
+
+--- NAZWA PLIKU: ./Services/BackupService.cs ---
+using System.Text.Json;
+using System.Text.Encodings.Web;
+using VstDeleter.Models;
+
+namespace VstDeleter.Services;
+
+/// <summary>
+/// Tworzy i przywraca kopie zapasowe usuniętych plików/katalogów.
+/// </summary>
+public static class BackupService
+{
+    // JSON z wcięciami i bez escapowania polskich znaków
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    public const string ManifestFileName = "VSTDeleter_manifest.json";
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Tworzenie kopii zapasowej
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Kopiuje wszystkie elementy z <paramref name="items"/> do folderu kopii,
+    /// zachowując pełną strukturę ścieżki, i zapisuje manifest JSON.
+    /// Zwraca ścieżkę do pliku manifestu.
+    /// </summary>
+    public static async Task<string> CreateBackupAsync(
+        string pluginName,
+        IEnumerable<FoundItem> items,
+        string backupRootFolder,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        // Nazwa folderu kopii: VSTDeleter_Backup_GuitarRig6_20260617_120000
+        string timestamp  = DateTimeOffset.Now.ToString("yyyyMMdd_HHmmss");
+        string safeName   = MakeSafe(pluginName);
+        string backupDir  = Path.Combine(backupRootFolder, $"VSTDeleter_Backup_{safeName}_{timestamp}");
+        Directory.CreateDirectory(backupDir);
+
+        var entries = new List<BackupEntry>();
+        int errorsCount = 0;
+
+        foreach (var item in items)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // Ścieżka relatywna: usuwa wiodący '/' → staje się podkatalogiem w backupDir
+            string relativePath = item.Path.TrimStart('/');
+            string targetPath   = Path.Combine(backupDir, relativePath);
+
+            try
+            {
+                progress?.Report(item.ShortPath);
+
+                await DittoCopyAsync(item.Path, targetPath, ct);
+
+                entries.Add(new BackupEntry
+                {
+                    OriginalAbsolutePath = item.Path,
+                    BackupRelativePath   = relativePath,
+                    Type                 = item.IsDirectory ? "directory" : "file",
+                    Category             = item.Category,
+                    SizeBytes            = item.SizeBytes
+                });
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                errorsCount++;
+                AppLogger.Log($"[backup] {item.Path}: {ex.ToString()}");
+            }
+        }
+
+        if (errorsCount > 0)
+        {
+            throw new Exception($"Zakończono z błędami. {errorsCount} element(ów) nie zostało skopiowanych. Zatrzymano operację, aby zapobiec utracie danych.");
+        }
+
+        // Zapis manifestu
+        var manifest = new BackupManifest
+        {
+            PluginName  = pluginName,
+            Created     = DateTimeOffset.Now,
+            BackupFolder = backupDir,
+            Entries     = entries
+        };
+
+        string manifestPath = Path.Combine(backupDir, ManifestFileName);
+        string json = JsonSerializer.Serialize(manifest, JsonOptions);
+        await File.WriteAllTextAsync(manifestPath, json, System.Text.Encoding.UTF8, ct);
+
+        return manifestPath;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Wczytanie manifestu
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public static BackupManifest? LoadManifest(string manifestPath)
+    {
+        try
+        {
+            string json = File.ReadAllText(manifestPath);
+            var manifest = JsonSerializer.Deserialize<BackupManifest>(json, JsonOptions);
+            if (manifest != null)
+            {
+                // Dynamiczna ścieżka - umożliwia przenoszenie kopii na dyskach zewnętrznych
+                manifest.BackupFolder = Path.GetDirectoryName(manifestPath) ?? string.Empty;
+            }
+            return manifest;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"[restore] Nie można wczytać manifestu: {ex.ToString()}");
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Przywracanie z kopii
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Przywraca wszystkie wpisy z manifestu z powrotem na oryginalne ścieżki.
+    /// Nadpisuje istniejące pliki.
+    /// </summary>
+    public static async Task<RestoreResult> RestoreBackupAsync(
+        BackupManifest manifest,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        return await Task.Run(async () =>
+        {
+            int ok = 0, errors = 0, skipped = 0;
+            var errorMessages = new List<string>();
+            var sudoCopyTasks = new List<(string source, string dest)>();
+
+            if (manifest.Entries == null)
+            {
+                errorMessages.Add("[Ochrona] Plik manifestu jest uszkodzony lub pomyślnie edytowany (brak pola 'entries').");
+                return new RestoreResult(0, 1, 0, errorMessages);
+            }
+
+            // Pre-flight check (Zapobieganie Zombie Restore)
+            foreach (var entry in manifest.Entries)
+            {
+                string checkPath = Path.Combine(manifest.BackupFolder, entry.BackupRelativePath);
+                if (entry.Type == "directory" && !Directory.Exists(checkPath))
+                {
+                    errorMessages.Add($"[Pre-flight] Przerwano! Brak wymaganego folderu w kopii: {checkPath}");
+                    return new RestoreResult(0, 1, 0, errorMessages);
+                }
+                else if (entry.Type != "directory" && !File.Exists(checkPath))
+                {
+                    errorMessages.Add($"[Pre-flight] Przerwano! Brak wymaganego pliku w kopii: {checkPath}");
+                    return new RestoreResult(0, 1, 0, errorMessages);
+                }
+            }
+
+            foreach (var entry in manifest.Entries)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                string sourcePath = Path.Combine(manifest.BackupFolder, entry.BackupRelativePath);
+                string destPath   = entry.OriginalAbsolutePath;
+
+                if (destPath.Contains("/var/db/receipts/", StringComparison.OrdinalIgnoreCase) ||
+                    destPath.Contains("/private/var/db/receipts/", StringComparison.OrdinalIgnoreCase))
+                {
+                    skipped++;
+                    AppLogger.Log($"[Przywracanie] Zignorowano paragon instalacyjny (ochrona SIP blokuje zapis): {destPath}");
+                    continue;
+                }
+
+                try
+                {
+                    progress?.Report(entry.ShortOriginalPath);
+
+                    await DittoCopyAsync(sourcePath, destPath, ct);
+
+                    ok++;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    sudoCopyTasks.Add((sourcePath, destPath));
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    errors++;
+                    errorMessages.Add($"{destPath}: {ex.Message}"); // Wiadomość dla UI
+                    AppLogger.Log($"[restore] {destPath}: {ex.ToString()}"); // Pełny stack dla logów
+                }
+            }
+
+            if (sudoCopyTasks.Count > 0)
+            {
+                try
+                {
+                    progress?.Report("Wymagane uprawnienia administratora do przywrócenia...");
+                    
+                    var bashLines = new List<string>();
+                    string currentUser = Environment.UserName;
+                    
+                    foreach (var task in sudoCopyTasks)
+                    {
+                        string safeSource = $"'{task.source.Replace("'", "'\\''")}'";
+                        
+                        string destDir = Path.GetDirectoryName(task.dest) ?? "";
+                        string safeDestDir = $"'{destDir.Replace("'", "'\\''")}'";
+                        
+                        string safeDest = $"'{task.dest.Replace("'", "'\\''")}'";
+
+                        bashLines.Add($"mkdir -p {safeDestDir}");
+                        bashLines.Add($"ditto {safeSource} {safeDest}");
+                        
+                        if (task.dest.StartsWith("/Library/") || task.dest.StartsWith("/Applications/"))
+                        {
+                            bashLines.Add($"chown -R root:wheel {safeDest}");
+                        }
+                        else
+                        {
+                            bashLines.Add($"chown -R {currentUser}:staff {safeDest}");
+                        }
+                    }
+                    
+                    string bashCommand = string.Join(" ; ", bashLines);
+                    string scriptPath = Path.GetTempFileName();
+                    
+                    try
+                    {
+                        await File.WriteAllTextAsync(scriptPath, bashCommand, ct);
+
+                        var psi = new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "osascript",
+                            UseShellExecute = false,
+                            RedirectStandardOutput = false,
+                            RedirectStandardError = true
+                        };
+                        
+                        psi.ArgumentList.Add("-e");
+                        psi.ArgumentList.Add("on run argv");
+                        psi.ArgumentList.Add("-e");
+                        psi.ArgumentList.Add("do shell script \"/bin/sh '\" & item 1 of argv & \"'\" with administrator privileges");
+                        psi.ArgumentList.Add("-e");
+                        psi.ArgumentList.Add("end run");
+                        psi.ArgumentList.Add(scriptPath);
+                        
+                        using var proc = System.Diagnostics.Process.Start(psi);
+                        if (proc != null)
+                        {
+                            string err = await proc.StandardError.ReadToEndAsync();
+                            await proc.WaitForExitAsync();
+                            
+                            if (proc.ExitCode == 0)
+                            {
+                                ok += sudoCopyTasks.Count;
+                            }
+                            else
+                            {
+                                errors += sudoCopyTasks.Count;
+                                errorMessages.Add($"Odmowa dostępu / błąd sudo przy przywracaniu: {err.Trim()}");
+                            }
+                        }
+                        else
+                        {
+                            errors += sudoCopyTasks.Count;
+                            errorMessages.Add("Nie udało się uruchomić osascript (sudo).");
+                        }
+                    }
+                    finally
+                    {
+                        if (File.Exists(scriptPath)) File.Delete(scriptPath);
+                    }
+                }
+                catch (System.ComponentModel.Win32Exception ex)
+                {
+                    errors += sudoCopyTasks.Count;
+                    errorMessages.Add($"Brak programu osascript w systemie (przywracanie): {ex.Message}");
+                    AppLogger.Log($"[restore sudo] osascript missing: {ex.ToString()}");
+                }
+                catch (InvalidOperationException ex)
+                {
+                    errors += sudoCopyTasks.Count;
+                    errorMessages.Add($"Błąd procesu sudo (przywracanie): {ex.Message}");
+                    AppLogger.Log($"[restore sudo] process error: {ex.ToString()}");
+                }
+                catch (Exception ex)
+                {
+                    errors += sudoCopyTasks.Count;
+                    errorMessages.Add($"Nieoczekiwany błąd Sudo (przywracanie): {ex.Message}");
+                    AppLogger.Log($"[restore sudo] unexpected: {ex.ToString()}");
+                }
+            }
+
+            return new RestoreResult(ok, errors, skipped, errorMessages);
+        }, ct);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Prywatne helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private static async Task DittoCopyAsync(string source, string dest, CancellationToken ct)
+    {
+        string destDir = Path.GetDirectoryName(dest) ?? "";
+        if (!string.IsNullOrEmpty(destDir))
+        {
+            Directory.CreateDirectory(destDir);
+        }
+
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "ditto",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true
+        };
+        psi.ArgumentList.Add(source);
+        psi.ArgumentList.Add(dest);
+
+        using var proc = System.Diagnostics.Process.Start(psi);
+        if (proc != null)
+        {
+            using var ctr = ct.Register(() => { try { proc.Kill(true); } catch { } });
+            string err = await proc.StandardError.ReadToEndAsync(ct);
+            await proc.WaitForExitAsync(ct);
+            if (proc.ExitCode != 0)
+            {
+                if (err.Contains("Permission denied", StringComparison.OrdinalIgnoreCase) || 
+                    err.Contains("Operation not permitted", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new UnauthorizedAccessException(err.Trim());
+                }
+                throw new Exception($"Polecenie ditto zwróciło błąd (kod {proc.ExitCode}) dla ścieżki: {source}. Detale: {err.Trim()}");
+            }
+        }
+    }
+
+    /// <summary>Usuwa znaki niebezpieczne z nazwy folderu.</summary>
+    private static string MakeSafe(string name) =>
+        new string(name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+}
+
+public record RestoreResult(int Restored, int Errors, int Skipped, List<string> ErrorMessages);
+
+--- NAZWA PLIKU: ./Services/AppLogger.cs ---
+using System;
+
+namespace VstDeleter.Services;
+
+public static class AppLogger
+{
+    public static event Action<string>? OnLog;
+
+    public static void Log(string message)
+    {
+        OnLog?.Invoke(message);
+        System.Diagnostics.Debug.WriteLine(message);
+    }
+}
+
+--- NAZWA PLIKU: ./Services/LanguageService.cs ---
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Collections.Generic;
+
+namespace VstDeleter.Services;
+
+public class LanguageService : INotifyPropertyChanged
+{
+    public static LanguageService Instance { get; } = new();
+
+    private string _currentLanguage = "pl";
+    public string CurrentLanguage
+    {
+        get => _currentLanguage;
+        set
+        {
+            if (_currentLanguage != value)
+            {
+                _currentLanguage = value;
+                OnPropertyChanged(nameof(CurrentLanguage));
+                OnPropertyChanged("Item"); // Wymusza odświeżenie wszystkich bindowań indexera w XAML
+            }
+        }
+    }
+
+    public void ToggleLanguage()
+    {
+        CurrentLanguage = CurrentLanguage == "pl" ? "en" : "pl";
+    }
+
+    public string this[string key]
+    {
+        get
+        {
+            var dict = _currentLanguage == "en" ? _en : _pl;
+            return dict.TryGetValue(key, out var val) ? val : key;
+        }
+    }
+
+    private readonly Dictionary<string, string> _pl = new()
+    {
+        // ── MainWindow.axaml ────────────────────────────────────────────────
+        { "AppTitle", "VST Deleter" },
+        { "Phase1_Title", "Wyczyść wtyczki VST & AU" },
+        { "Phase1_Subtitle", "Wyszukaj wtyczkę, przejrzyj pliki i usuń to, co chcesz." },
+        { "Phase1_PluginNameLabel", "NAZWA WTYCZKI" },
+        { "Phase1_SearchPlaceholder", "np. Guitar Rig 6, Serum, Kontakt…" },
+        { "Phase1_ScanBtn", "Skanuj" },
+        { "Phase1_LocalPluginsLabel", "ALBO WYBIERZ Z ZAINSTALOWANYCH" },
+        { "Phase1_LocalPluginsPlaceholder", "Wybierz wykrytą wtyczkę z dysku..." },
+        { "Phase1_LocalScanBtn", "Skanuj z systemu" },
+        { "Phase1_DetectedFormats", "Wykryto formaty:" },
+        { "Phase1_Hint", "💡  Baza zawiera 200+ znanych wtyczek VST/AU/CLAP. Możesz też wpisać własną nazwę." },
+        { "Phase1_RestoreBoxTitle", "Masz już kopię zapasową?" },
+        { "Phase1_RestoreBoxSub", "Wczytaj manifest i przywróć usunięte wcześniej pliki." },
+        { "Phase1_RestoreBtn", "Przywróć kopię" },
+
+        { "Phase2_Searching", "Szukam śladów po wtyczce…" },
+
+        { "Phase3_ResultsFor", "Wyniki dla: {0}" },
+        { "Phase3_FoundItemsCount", "Znaleziono {0} elementów · łącznie {1}" },
+        { "Phase3_NewSearchBtn", "Nowe wyszukiwanie" },
+        { "Phase3_SelectAll", "Zaznacz wszystko" },
+        { "Phase3_DeselectAll", "Odznacz wszystko" },
+        { "Phase3_SelectedLabel", "Zaznaczono: {0}" },
+        { "Phase3_BackupCheckbox", "🔒  Utwórz kopię zapasową przed usunięciem" },
+        { "Phase3_BackupSelectFolder", "(kliknij Wybierz…)" },
+        { "Phase3_BackupChooseBtn", "Wybierz…" },
+        { "Phase3_NoResultsTitle", "Nie znaleziono żadnych śladów" },
+        { "Phase3_NoResultsSub", "System jest czysty. Ta wtyczka nie pozostawiła śladów." },
+        { "Phase3_DeleteSummary", "Do usunięcia: {0}  ·  Rozmiar: {1}" },
+        { "Phase3_CancelBtn", "Anuluj" },
+        { "Phase3_BackupOnlyBtn", "Tylko kopia" },
+        { "Phase3_BackupOnlyTooltip", "Wymaga wybranego folderu kopii zapasowej" },
+        { "Phase3_DeleteSelectedBtn", "Usuń zaznaczone" },
+
+        { "Phase4_Deleting", "Usuwam pliki…" },
+
+        { "Phase5_BackupSaved", "🔒  Kopia zapasowa zapisana:" },
+        { "Phase5_PreviewBtn", "Podgląd →" },
+        { "Phase5_SystemFilesHint", "💡 Pliki systemowe wymagają uprawnień administratora (uruchom z sudo)." },
+        { "Phase5_BackToResultsBtn", "← Wróć do wyników" },
+
+        { "Phase5b_BackingUp", "Tworzę kopię zapasową…" },
+        { "Phase5b_WaitHint", "Nie zamykaj programu — kopia jest tworzona…" },
+
+        { "Phase6_RestoreTitle", "Przywróć kopię zapasową" },
+        { "Phase6_RestoreSub", "Wybierz plik manifestu (VSTDeleter_manifest.json) z folderu kopii.\nManifest zawiera mapę wszystkich plików i ich oryginalnych lokalizacji." },
+        { "Phase6_RestoreClickBelow", "Kliknij poniżej, aby wybrać manifest kopii" },
+        { "Phase6_ChooseManifestBtn", "Wybierz VSTDeleter_manifest.json" },
+        { "Phase6_ManifestLoaded", "✓  Manifest wczytany poprawnie:" },
+        { "Phase6_BackBtn", "← Wróć" },
+        { "Phase6_PreviewRestoreBtn", "Podgląd i przywracanie" },
+
+        { "Phase7_ReviewTitle", "Podgląd przywracania" },
+        { "Phase7_BackupFolderLabel", "Folder kopii:" },
+        { "Phase7_RestoreSelectedBtn", "Przywróć {0} plików" },
+
+        { "Phase8_Restoring", "Przywracam pliki..." },
+        { "Phase9_SuccessTitle", "Zakończono!" },
+
+        // ── MainViewModel.cs ────────────────────────────────────────────────
+        { "Log_FatalError", "Błąd krytyczny" },
+        { "Scan_Searching", "Szukam śladów:" },
+        { "Scan_Checking", "Sprawdzam:" },
+        { "Scan_QueryError", "⚠ Błąd zapytania:" },
+        { "Backup_SelectFolderDialog", "Wybierz folder na kopię zapasową" },
+        { "Backup_EstimatedSize", "Szacowana kopia: ~{0}  →  {1}" },
+        { "Backup_NoFolder", "(wybierz folder)" },
+        { "Backup_Preparing", "Przygotowuję kopię…" },
+        { "Backup_Error", "Błąd:" },
+        { "Backup_OnlySuccess", "✓ Kopia zapasowa zapisana. Żaden plik nie został usunięty." },
+        { "Delete_FolderRequired", "Aby kontynuować, wybierz folder docelowy dla kopii zapasowej (lub odznacz tę opcję)." },
+        { "Delete_AbortedSafe", "Przerwano operację ze względów bezpieczeństwa." },
+        { "Delete_BackupError", "Błąd kopii:" },
+        { "Delete_DeletingItems", "Usuwam zaznaczone elementy…" },
+        { "Delete_Success", "✓ Usunięto {0} element(ów) pomyślnie." },
+        { "Delete_Partial", "Usunięto {0}, błędów: {1}." },
+        { "Manifest_SelectDialog", "Wybierz plik manifestu kopii (VSTDeleter_manifest.json)" },
+        { "Manifest_Invalid", "⚠ Nie można wczytać pliku — sprawdź czy to poprawny manifest VST Deleter." },
+        { "Restore_HeaderInfo", "Wtyczka: {0}  ·  Kopia z: {1:dd.MM.yyyy HH:mm}  ·  {2} elementów" },
+        { "Restore_SuccessSkipped", "✓ Przywrócono {0} plików. (Pominięto {1} chronionych przez SIP)" },
+        { "Restore_Success", "✓ Przywrócono {0} element(ów) pomyślnie." },
+        { "Restore_Partial", "Przywrócono {0}, błędów: {1}, pominięto: {2}." },
+
+        // ── Usługi pod spodem ────────────────────────────────────────────────
+        { "Cat_PluginAU", "Wtyczka (AudioUnit)" },
+        { "Cat_PluginVST", "Wtyczka (VST)" },
+        { "Cat_PluginVST3", "Wtyczka (VST3)" },
+        { "Cat_PluginCLAP", "Wtyczka (CLAP)" },
+        { "Cat_PluginAAX", "Wtyczka (AAX)" },
+        { "Cat_App", "Aplikacja" },
+        { "Cat_Config", "Plik konfiguracyjny / Log" },
+        { "Cat_Presets", "Presety audio / Banki" },
+        { "Cat_Library", "Biblioteka brzmień / Baza danych" },
+        { "Cat_Other", "Inny plik wtyczki" },
+
+        { "VST2 (systemowy)", "VST2 (systemowy)" },
+        { "VST2 (użytkownik)", "VST2 (użytkownik)" },
+        { "VST3 (systemowy)", "VST3 (systemowy)" },
+        { "VST3 (użytkownik)", "VST3 (użytkownik)" },
+        { "AudioUnit (systemowy)", "AudioUnit (systemowy)" },
+        { "AudioUnit (użytkownik)", "AudioUnit (użytkownik)" },
+        { "CLAP (systemowy)", "CLAP (systemowy)" },
+        { "CLAP (użytkownik)", "CLAP (użytkownik)" },
+        { "AAX / Pro Tools", "AAX / Pro Tools" },
+        { "AAX / Pro Tools (użytkownik)", "AAX / Pro Tools (użytkownik)" },
+        { "Biblioteka brzmień (Shared)", "Biblioteka brzmień (Shared)" },
+        { "Ustawienia / dane", "Ustawienia / dane" },
+        { "Native Instruments", "Native Instruments" },
+        { "Steinberg", "Steinberg" },
+        { "Preferencje", "Preferencje" },
+        { "Preferencje NI", "Preferencje NI" },
+        { "Plik licencji (ukryty)", "Plik licencji (ukryty)" },
+        { "Logi", "Logi" },
+        { "Cache", "Cache" },
+        { "Receipt (pkgutil)", "Receipt (pkgutil)" },
+        { "Presety audio", "Presety audio" },
+        { "Dźwięki / samples", "Dźwięki / samples" },
+        { "Dokumenty", "Dokumenty" },
+        { "Aplikacja", "Aplikacja" },
+        { "Plik konfiguracyjny / Log", "Plik konfiguracyjny / Log" },
+        { "Presety audio / Banki", "Presety audio / Banki" },
+        { "Inne", "Inne" },
+
+        { "Err_SudoDenied", "Odmowa dostępu / błąd sudo:" },
+        { "Err_SudoFail", "Nie udało się uruchomić osascript." },
+        { "Err_InvalidChars", "Nazwa wtyczki zawiera niedozwolone znaki" },
+        { "Err_TooShort", "Nazwa wtyczki musi mieć co najmniej 2 znaki" },
+        { "Err_ManifestCorrupt", "[Ochrona] Plik manifestu jest uszkodzony lub pomyślnie edytowany (brak pola 'entries')." },
+        { "Err_MissingDir", "[Pre-flight] Przerwano! Brak wymaganego folderu w kopii:" },
+        { "Err_MissingFile", "[Pre-flight] Przerwano! Brak wymaganego pliku w kopii:" },
+    };
+
+    private readonly Dictionary<string, string> _en = new()
+    {
+        // ── MainWindow.axaml ────────────────────────────────────────────────
+        { "AppTitle", "VST Deleter" },
+        { "Phase1_Title", "Clean up VST & AU plugins" },
+        { "Phase1_Subtitle", "Search for a plugin, review files and delete what you want." },
+        { "Phase1_PluginNameLabel", "PLUGIN NAME" },
+        { "Phase1_SearchPlaceholder", "e.g., Guitar Rig 6, Serum, Kontakt…" },
+        { "Phase1_ScanBtn", "Scan" },
+        { "Phase1_LocalPluginsLabel", "OR SELECT FROM INSTALLED" },
+        { "Phase1_LocalPluginsPlaceholder", "Select a detected plugin..." },
+        { "Phase1_LocalScanBtn", "Scan from system" },
+        { "Phase1_DetectedFormats", "Detected formats:" },
+        { "Phase1_Hint", "💡  Database contains 200+ known VST/AU/CLAP plugins. You can also type a custom name." },
+        { "Phase1_RestoreBoxTitle", "Already have a backup?" },
+        { "Phase1_RestoreBoxSub", "Load a manifest and restore previously deleted files." },
+        { "Phase1_RestoreBtn", "Restore backup" },
+
+        { "Phase2_Searching", "Searching for plugin traces…" },
+
+        { "Phase3_ResultsFor", "Results for: {0}" },
+        { "Phase3_FoundItemsCount", "Found {0} items · total {1}" },
+        { "Phase3_NewSearchBtn", "New search" },
+        { "Phase3_SelectAll", "Select all" },
+        { "Phase3_DeselectAll", "Deselect all" },
+        { "Phase3_SelectedLabel", "Selected: {0}" },
+        { "Phase3_BackupCheckbox", "🔒  Create a backup before deleting" },
+        { "Phase3_BackupSelectFolder", "(click Select…)" },
+        { "Phase3_BackupChooseBtn", "Select…" },
+        { "Phase3_NoResultsTitle", "No traces found" },
+        { "Phase3_NoResultsSub", "System is clean. This plugin left no traces." },
+        { "Phase3_DeleteSummary", "To delete: {0}  ·  Size: {1}" },
+        { "Phase3_CancelBtn", "Cancel" },
+        { "Phase3_BackupOnlyBtn", "Backup only" },
+        { "Phase3_BackupOnlyTooltip", "Requires a selected backup folder" },
+        { "Phase3_DeleteSelectedBtn", "Delete selected" },
+
+        { "Phase4_Deleting", "Deleting files…" },
+
+        { "Phase5_BackupSaved", "🔒  Backup saved:" },
+        { "Phase5_PreviewBtn", "Preview →" },
+        { "Phase5_SystemFilesHint", "💡 System files require administrator privileges (run with sudo)." },
+        { "Phase5_BackToResultsBtn", "← Back to results" },
+
+        { "Phase5b_BackingUp", "Creating backup…" },
+        { "Phase5b_WaitHint", "Please don't close the app — creating backup…" },
+
+        { "Phase6_RestoreTitle", "Restore backup" },
+        { "Phase6_RestoreSub", "Select the manifest file (VSTDeleter_manifest.json) from your backup folder.\nThe manifest contains a map of all files and their original locations." },
+        { "Phase6_RestoreClickBelow", "Click below to select the backup manifest" },
+        { "Phase6_ChooseManifestBtn", "Select VSTDeleter_manifest.json" },
+        { "Phase6_ManifestLoaded", "✓  Manifest loaded successfully:" },
+        { "Phase6_BackBtn", "← Back" },
+        { "Phase6_PreviewRestoreBtn", "Preview and restore" },
+
+        { "Phase7_ReviewTitle", "Restore preview" },
+        { "Phase7_BackupFolderLabel", "Backup folder:" },
+        { "Phase7_RestoreSelectedBtn", "Restore {0} files" },
+
+        { "Phase8_Restoring", "Restoring files..." },
+        { "Phase9_SuccessTitle", "Done!" },
+
+        // ── MainViewModel.cs ────────────────────────────────────────────────
+        { "Log_FatalError", "Fatal error" },
+        { "Scan_Searching", "Searching traces:" },
+        { "Scan_Checking", "Checking:" },
+        { "Scan_QueryError", "⚠ Query error:" },
+        { "Backup_SelectFolderDialog", "Select backup folder" },
+        { "Backup_EstimatedSize", "Estimated backup: ~{0}  →  {1}" },
+        { "Backup_NoFolder", "(select folder)" },
+        { "Backup_Preparing", "Preparing backup…" },
+        { "Backup_Error", "Error:" },
+        { "Backup_OnlySuccess", "✓ Backup saved. No files were deleted." },
+        { "Delete_FolderRequired", "To continue, select a destination folder for the backup (or uncheck the option)." },
+        { "Delete_AbortedSafe", "Operation aborted for safety reasons." },
+        { "Delete_BackupError", "Backup error:" },
+        { "Delete_DeletingItems", "Deleting selected items…" },
+        { "Delete_Success", "✓ Successfully deleted {0} item(s)." },
+        { "Delete_Partial", "Deleted {0}, errors: {1}." },
+        { "Manifest_SelectDialog", "Select backup manifest file (VSTDeleter_manifest.json)" },
+        { "Manifest_Invalid", "⚠ Cannot load file — make sure it is a valid VST Deleter manifest." },
+        { "Restore_HeaderInfo", "Plugin: {0}  ·  Backup from: {1:dd.MM.yyyy HH:mm}  ·  {2} items" },
+        { "Restore_SuccessSkipped", "✓ Restored {0} files. (Skipped {1} protected by SIP)" },
+        { "Restore_Success", "✓ Successfully restored {0} item(s)." },
+        { "Restore_Partial", "Restored {0}, errors: {1}, skipped: {2}." },
+
+        // ── Usługi pod spodem ────────────────────────────────────────────────
+        { "Cat_PluginAU", "Plugin (AudioUnit)" },
+        { "Cat_PluginVST", "Plugin (VST)" },
+        { "Cat_PluginVST3", "Plugin (VST3)" },
+        { "Cat_PluginCLAP", "Plugin (CLAP)" },
+        { "Cat_PluginAAX", "Plugin (AAX)" },
+        { "Cat_App", "Application" },
+        { "Cat_Config", "Config file / Log" },
+        { "Cat_Presets", "Audio presets / Banks" },
+        { "Cat_Library", "Sound library / Database" },
+        { "Cat_Other", "Other plugin file" },
+
+        { "VST2 (systemowy)", "VST2 (system)" },
+        { "VST2 (użytkownik)", "VST2 (user)" },
+        { "VST3 (systemowy)", "VST3 (system)" },
+        { "VST3 (użytkownik)", "VST3 (user)" },
+        { "AudioUnit (systemowy)", "AudioUnit (system)" },
+        { "AudioUnit (użytkownik)", "AudioUnit (user)" },
+        { "CLAP (systemowy)", "CLAP (system)" },
+        { "CLAP (użytkownik)", "CLAP (user)" },
+        { "AAX / Pro Tools", "AAX / Pro Tools" },
+        { "AAX / Pro Tools (użytkownik)", "AAX / Pro Tools (user)" },
+        { "Biblioteka brzmień (Shared)", "Sound library (Shared)" },
+        { "Ustawienia / dane", "Settings / Data" },
+        { "Native Instruments", "Native Instruments" },
+        { "Steinberg", "Steinberg" },
+        { "Preferencje", "Preferences" },
+        { "Preferencje NI", "NI Preferences" },
+        { "Plik licencji (ukryty)", "License file (hidden)" },
+        { "Logi", "Logs" },
+        { "Cache", "Cache" },
+        { "Receipt (pkgutil)", "Receipt (pkgutil)" },
+        { "Presety audio", "Audio presets" },
+        { "Dźwięki / samples", "Sounds / samples" },
+        { "Dokumenty", "Documents" },
+        { "Aplikacja", "Application" },
+        { "Plik konfiguracyjny / Log", "Config file / Log" },
+        { "Presety audio / Banki", "Audio presets / Banks" },
+        { "Inne", "Other" },
+
+        { "Err_SudoDenied", "Access denied / sudo error:" },
+        { "Err_SudoFail", "Failed to launch osascript." },
+        { "Err_InvalidChars", "Plugin name contains invalid characters" },
+        { "Err_TooShort", "Plugin name must be at least 2 characters long" },
+        { "Err_ManifestCorrupt", "[Protection] Manifest file is corrupted or manually edited (missing 'entries')." },
+        { "Err_MissingDir", "[Pre-flight] Aborted! Missing required folder in backup:" },
+        { "Err_MissingFile", "[Pre-flight] Aborted! Missing required file in backup:" },
+    };
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+    protected void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+--- NAZWA PLIKU: ./Services/LocalizedFormatConverter.cs ---
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using Avalonia.Data.Converters;
+
+namespace VstDeleter.Services;
+
+public class LocalizedFormatConverter : IMultiValueConverter
+{
+    public static LocalizedFormatConverter Instance { get; } = new();
+
+    public object? Convert(IList<object?> values, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (values == null || values.Count == 0) return null;
+        
+        var format = values[0]?.ToString();
+        if (string.IsNullOrEmpty(format)) return null;
+        
+        var args = values.Skip(1).ToArray();
+        try 
+        {
+            return string.Format(format, args);
+        } 
+        catch 
+        {
+            return format;
+        }
+    }
+}
+
+--- NAZWA PLIKU: ./Services/InstalledPluginsDiscovery.cs ---
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using VstDeleter.Models;
+
+namespace VstDeleter.Services;
+
+public static class InstalledPluginsDiscovery
+{
+    public static async Task<List<InstalledPlugin>> DiscoverPluginsAsync()
+    {
+        return await Task.Run(() =>
+        {
+            var dict = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+            // Definiujemy ścieżki: parę (Systemowa, Domowa), przyjazna nazwa formatu oraz fizyczne rozszerzenie.
+            var pathsToScan = new List<(string Path, string Format, string Extension)>
+            {
+                ("/Library/Audio/Plug-Ins/VST", "VST", ".vst"),
+                (Path.Combine(home, "Library/Audio/Plug-Ins/VST"), "VST", ".vst"),
+                ("/Library/Audio/Plug-Ins/VST3", "VST3", ".vst3"),
+                (Path.Combine(home, "Library/Audio/Plug-Ins/VST3"), "VST3", ".vst3"),
+                ("/Library/Audio/Plug-Ins/Components", "AudioUnit", ".component"),
+                (Path.Combine(home, "Library/Audio/Plug-Ins/Components"), "AudioUnit", ".component"),
+                ("/Library/Audio/Plug-Ins/CLAP", "CLAP", ".clap"),
+                (Path.Combine(home, "Library/Audio/Plug-Ins/CLAP"), "CLAP", ".clap"),
+                ("/Library/Application Support/Avid/Audio/Plug-Ins", "AAX", ".aaxplugin"),
+                (Path.Combine(home, "Library/Application Support/Avid/Audio/Plug-Ins"), "AAX", ".aaxplugin")
+            };
+
+            foreach (var group in pathsToScan)
+            {
+                if (!Directory.Exists(group.Path))
+                    continue;
+
+                try
+                {
+                    var options = new EnumerationOptions { IgnoreInaccessible = true };
+                    foreach (var entry in Directory.EnumerateFileSystemEntries(group.Path, "*", options))
+                    {
+                        if (entry.EndsWith(group.Extension, StringComparison.OrdinalIgnoreCase))
+                        {
+                            string name = Path.GetFileNameWithoutExtension(entry);
+                            
+                            if (!dict.ContainsKey(name))
+                                dict[name] = new HashSet<string>();
+                                
+                            dict[name].Add(group.Format);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Log($"[InstalledPluginsDiscovery Błąd skanowania {group.Path}]: {ex.ToString()}");
+                }
+            }
+
+            return dict
+                .Select(kvp => new InstalledPlugin(kvp.Key, kvp.Value.OrderBy(x => x).ToList()))
+                .OrderBy(p => p.Name)
+                .ToList();
+        });
+    }
+}
+
+--- NAZWA PLIKU: ./Program.cs ---
+﻿using Avalonia;
+using System;
+
+namespace VstDeleter;
+
+sealed class Program
+{
+    // Initialization code. Don't use any Avalonia, third-party APIs or any
+    // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
+    // yet and stuff might break.
+    [STAThread]
+    public static void Main(string[] args) => BuildAvaloniaApp()
+        .StartWithClassicDesktopLifetime(args);
+
+    // Avalonia configuration, don't remove; also used by visual designer.
+    public static AppBuilder BuildAvaloniaApp()
+        => AppBuilder.Configure<App>()
+            .UsePlatformDetect()
+#if DEBUG
+            .WithDeveloperTools()
+#endif
+            .WithInterFont()
+            .LogToTrace();
+}
+

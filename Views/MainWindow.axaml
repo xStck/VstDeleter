@@ -2,9 +2,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:VstDeleter.ViewModels"
         xmlns:models="using:VstDeleter.Models"
+        xmlns:loc="using:VstDeleter.Services"
         x:Class="VstDeleter.Views.MainWindow"
         x:DataType="vm:MainViewModel"
-        Title="VST Deleter"
+        Title="{Binding [AppTitle], Source={x:Static loc:LanguageService.Instance}}"
         Width="820" Height="660"
         MinWidth="680" MinHeight="520"
         WindowStartupLocation="CenterScreen"
@@ -177,12 +178,18 @@
                       VerticalAlignment="Center"
                       Spacing="8">
             <TextBlock Text="🧹" FontSize="16" VerticalAlignment="Center"/>
-            <TextBlock Text="VST Deleter"
+            <TextBlock Text="{Binding [AppTitle], Source={x:Static loc:LanguageService.Instance}}"
                        FontSize="13"
                        FontWeight="SemiBold"
                        Foreground="#6B6B80"
                        VerticalAlignment="Center"/>
           </StackPanel>
+          <!-- Przełącznik języka -->
+          <Button HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,16,0"
+                  Classes="ghost-btn" Padding="8,4" FontSize="11"
+                  Command="{Binding ToggleLanguageCommand}">
+             <TextBlock Text="{Binding CurrentLanguageTarget, FallbackValue='EN'}" FontWeight="Bold"/>
+          </Button>
         </Panel>
       </Border>
 
@@ -199,16 +206,16 @@
 
           <!-- Nagłówek -->
           <StackPanel Grid.Row="0" Margin="0,0,0,36">
-            <TextBlock Text="Wyczyść wtyczki VST &amp; AU"
+            <TextBlock Text="{Binding [Phase1_Title], Source={x:Static loc:LanguageService.Instance}}"
                        FontSize="30" FontWeight="Bold"
                        Foreground="#F3F4F6"/>
-            <TextBlock Text="Wyszukaj wtyczkę, przejrzyj pliki i usuń to, co chcesz."
+            <TextBlock Text="{Binding [Phase1_Subtitle], Source={x:Static loc:LanguageService.Instance}}"
                        FontSize="14" Foreground="#6B6B80" Margin="0,8,0,0"/>
           </StackPanel>
 
           <!-- Etykieta sekcji -->
           <TextBlock Grid.Row="1"
-                     Text="NAZWA WTYCZKI"
+                     Text="{Binding [Phase1_PluginNameLabel], Source={x:Static loc:LanguageService.Instance}}"
                      Classes="section-label"
                      Margin="0,0,0,8"/>
 
@@ -220,15 +227,15 @@
               <TextBox Grid.Column="0"
                        Classes="search-box"
                        Text="{Binding SearchText}"
-                       PlaceholderText="np. Guitar Rig 6, Serum, Kontakt…"
+                       PlaceholderText="{Binding [Phase1_SearchPlaceholder], Source={x:Static loc:LanguageService.Instance}}"
                        x:Name="SearchBox"/>
               <Button Grid.Column="1"
                       Classes="action-btn"
                       Command="{Binding StartScanCommand}"
-                      ToolTip.Tip="Szukaj plików tej wtyczki">
+                      >
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <TextBlock Text="🔍" FontSize="16"/>
-                  <TextBlock Text="Skanuj" FontSize="14" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding [Phase1_ScanBtn], Source={x:Static loc:LanguageService.Instance}}" FontSize="14" FontWeight="SemiBold"/>
                 </StackPanel>
               </Button>
             </Grid>
@@ -277,7 +284,7 @@
           <!-- NOWOŚĆ: Sekcja lokalnych wtyczek (Zainstalowane)                 -->
           <!-- ────────────────────────────────────────────────────────────── -->
           <StackPanel Grid.Row="3" Margin="0,24,0,0" Spacing="8">
-            <TextBlock Text="ALBO WYBIERZ Z ZAINSTALOWANYCH"
+            <TextBlock Text="{Binding [Phase1_LocalPluginsLabel], Source={x:Static loc:LanguageService.Instance}}"
                        Classes="section-label"/>
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
               
@@ -286,7 +293,7 @@
                         HorizontalAlignment="Stretch"
                         ItemsSource="{Binding LocalPlugins}"
                         SelectedItem="{Binding SelectedLocalPlugin}"
-                        PlaceholderText="Wybierz wykrytą wtyczkę z dysku..."
+                        PlaceholderText="{Binding [Phase1_LocalPluginsPlaceholder], Source={x:Static loc:LanguageService.Instance}}"
                         Background="#18181F"
                         BorderBrush="#2D2D45"
                         CornerRadius="8"
@@ -305,10 +312,10 @@
                       Command="{Binding ScanLocalPluginCommand}"
                       IsEnabled="{Binding SelectedLocalPlugin, Converter={x:Static ObjectConverters.IsNotNull}}"
                       Background="#2563EB"
-                      ToolTip.Tip="Uruchom bezpieczny skaner dla wybranej wtyczki z dysku">
+                      >
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <TextBlock Text="⚡" FontSize="16"/>
-                  <TextBlock Text="Skanuj z systemu" FontSize="14" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding [Phase1_LocalScanBtn], Source={x:Static loc:LanguageService.Instance}}" FontSize="14" FontWeight="SemiBold"/>
                 </StackPanel>
               </Button>
             </Grid>
@@ -324,22 +331,22 @@
 
           <!-- Hint i przycisk przywracania -->
           <StackPanel Grid.Row="4" VerticalAlignment="Top" Margin="0,24,0,0" Spacing="16">
-            <TextBlock Text="💡  Baza zawiera 200+ znanych wtyczek VST/AU/CLAP. Możesz też wpisać własną nazwę."
+            <TextBlock Text="{Binding [Phase1_Hint], Source={x:Static loc:LanguageService.Instance}}"
                        FontSize="12" Foreground="#4B5563" TextWrapping="Wrap"/>
             <Border Background="#0D0D1A" BorderBrush="#2A2A42" BorderThickness="1"
                     CornerRadius="10" Padding="18,14">
               <Grid ColumnDefinitions="*,Auto">
                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="4">
-                  <TextBlock Text="Masz już kopię zapasową?" FontSize="13"
+                  <TextBlock Text="{Binding [Phase1_RestoreBoxTitle], Source={x:Static loc:LanguageService.Instance}}" FontSize="13"
                              FontWeight="SemiBold" Foreground="#9CA3AF"/>
-                  <TextBlock Text="Wczytaj manifest i przywróć usunięte wcześniej pliki."
+                  <TextBlock Text="{Binding [Phase1_RestoreBoxSub], Source={x:Static loc:LanguageService.Instance}}"
                              FontSize="11" Foreground="#4B5563" TextWrapping="Wrap"/>
                 </StackPanel>
                 <Button Grid.Column="1" Classes="ghost-btn"
                         Command="{Binding GoToRestoreCommand}" Margin="12,0,0,0">
                   <StackPanel Orientation="Horizontal" Spacing="6">
                     <TextBlock Text="🔄"/>
-                    <TextBlock Text="Przywróć kopię"/>
+                    <TextBlock Text="{Binding [Phase1_RestoreBtn], Source={x:Static loc:LanguageService.Instance}}"/>
                   </StackPanel>
                 </Button>
               </Grid>
@@ -361,7 +368,7 @@
             <TextBlock Text="🔍"
                        FontSize="48"
                        HorizontalAlignment="Center"/>
-            <TextBlock Text="Szukam śladów po wtyczce…"
+            <TextBlock Text="{Binding [Phase2_Searching], Source={x:Static loc:LanguageService.Instance}}"
                        FontSize="22" FontWeight="Bold"
                        Foreground="#F3F4F6"
                        HorizontalAlignment="Center"/>
@@ -392,13 +399,18 @@
           <!-- Nagłówek wyników -->
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
             <StackPanel Grid.Column="0">
-              <TextBlock Text="{Binding SelectedPlugin,
-                           StringFormat='Wyniki dla: {0}'}"
-                         FontSize="22" FontWeight="Bold"
-                         Foreground="#F3F4F6"/>
+              <TextBlock FontSize="22" FontWeight="Bold" Foreground="#F3F4F6">
+                <TextBlock.Text>
+                  <MultiBinding Converter="{x:Static loc:LocalizedFormatConverter.Instance}">
+                    <Binding Path="[Phase3_ResultsFor]" Source="{x:Static loc:LanguageService.Instance}" />
+                    <Binding Path="SelectedPlugin" />
+                  </MultiBinding>
+                </TextBlock.Text>
+              </TextBlock>
               <TextBlock Foreground="#6B6B80" FontSize="13" Margin="0,4,0,0">
                 <TextBlock.Text>
-                  <MultiBinding StringFormat="Znaleziono {0} elementów · łącznie {1}">
+                  <MultiBinding Converter="{x:Static loc:LocalizedFormatConverter.Instance}">
+                    <Binding Path="[Phase3_FoundItemsCount]" Source="{x:Static loc:LanguageService.Instance}" />
                     <Binding Path="FoundItems.Count"/>
                     <Binding Path="TotalSizeLabel"/>
                   </MultiBinding>
@@ -411,7 +423,7 @@
                     VerticalAlignment="Top">
               <StackPanel Orientation="Horizontal" Spacing="6">
                 <TextBlock Text="←" FontSize="14"/>
-                <TextBlock Text="Nowe wyszukiwanie"/>
+                <TextBlock Text="{Binding [Phase3_NewSearchBtn], Source={x:Static loc:LanguageService.Instance}}"/>
               </StackPanel>
             </Button>
           </Grid>
@@ -421,12 +433,13 @@
             <Border Background="#13131D" CornerRadius="8,8,0,0" Padding="14,10">
               <Grid ColumnDefinitions="Auto,Auto,*,Auto">
                 <Button Grid.Column="0" Classes="ghost-btn" Command="{Binding SelectAllCommand}"
-                        Padding="12,7" FontSize="12">Zaznacz wszystko</Button>
+                        Padding="12,7" FontSize="12" Content="{Binding [Phase3_SelectAll], Source={x:Static loc:LanguageService.Instance}}" />
                 <Button Grid.Column="1" Classes="ghost-btn" Command="{Binding DeselectAllCommand}"
-                        Padding="12,7" FontSize="12" Margin="6,0,0,0">Odznacz wszystko</Button>
+                        Padding="12,7" FontSize="12" Margin="6,0,0,0" Content="{Binding [Phase3_DeselectAll], Source={x:Static loc:LanguageService.Instance}}" />
                 <TextBlock Grid.Column="3" VerticalAlignment="Center" FontSize="12" Foreground="#9CA3AF">
                   <TextBlock.Text>
-                    <MultiBinding StringFormat="Zaznaczono: {0}">
+                    <MultiBinding Converter="{x:Static loc:LocalizedFormatConverter.Instance}">
+                      <Binding Path="[Phase3_SelectedLabel]" Source="{x:Static loc:LanguageService.Instance}" />
                       <Binding Path="SelectedSizeLabel"/>
                     </MultiBinding>
                   </TextBlock.Text>
@@ -439,22 +452,21 @@
                     CornerRadius="0,0,8,8" Padding="14,10" Margin="0,0,0,6">
               <StackPanel Spacing="8">
                 <CheckBox IsChecked="{Binding BackupEnabled}"
-                          Foreground="#C4B5FD" FontSize="13" FontWeight="SemiBold">
-                  🔒  Utwórz kopię zapasową przed usunięciem
-                </CheckBox>
+                          Foreground="#C4B5FD" FontSize="13" FontWeight="SemiBold"
+                          Content="{Binding [Phase3_BackupCheckbox], Source={x:Static loc:LanguageService.Instance}}" />
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"
                       IsVisible="{Binding BackupEnabled}" Margin="22,0,0,0">
                   <Border Grid.Column="0" Background="#13131D" BorderBrush="#2D2D45"
                           BorderThickness="1" CornerRadius="6" Padding="10,7">
                     <TextBlock Text="{Binding BackupFolderPath,
-                                     FallbackValue='(kliknij Wybierz…)'}"
+                                     FallbackValue='{Binding [Phase3_BackupSelectFolder], Source={x:Static loc:LanguageService.Instance}}'}"
                                FontSize="12" FontFamily="Menlo,Consolas,monospace"
                                Foreground="#9CA3AF" TextTrimming="CharacterEllipsis"
                                VerticalAlignment="Center"/>
                   </Border>
                   <Button Grid.Column="1" Classes="ghost-btn"
                           Command="{Binding ChooseBackupFolderCommand}"
-                          Padding="12,7" FontSize="12">Wybierz…</Button>
+                          Padding="12,7" FontSize="12" Content="{Binding [Phase3_BackupChooseBtn], Source={x:Static loc:LanguageService.Instance}}" />
                 </Grid>
                 <TextBlock Text="{Binding BackupSizeInfo}"
                            IsVisible="{Binding BackupEnabled}"
@@ -471,11 +483,11 @@
                       VerticalAlignment="Center"
                       Spacing="12">
             <TextBlock Text="✅" FontSize="48" HorizontalAlignment="Center"/>
-            <TextBlock Text="Nie znaleziono żadnych śladów"
+            <TextBlock Text="{Binding [Phase3_NoResultsTitle], Source={x:Static loc:LanguageService.Instance}}"
                        FontSize="20" FontWeight="SemiBold"
                        Foreground="#F3F4F6"
                        HorizontalAlignment="Center"/>
-            <TextBlock Text="System jest czysty. Ta wtyczka nie pozostawiła śladów."
+            <TextBlock Text="{Binding [Phase3_NoResultsSub], Source={x:Static loc:LanguageService.Instance}}"
                        FontSize="13" Foreground="#6B6B80"
                        HorizontalAlignment="Center"/>
           </StackPanel>
@@ -516,7 +528,7 @@
                                  Foreground="#E5E7EB"
                                  FontFamily="Menlo,Consolas,monospace"
                                  TextTrimming="CharacterEllipsis"/>
-                      <TextBlock Text="{Binding Category}"
+                      <TextBlock Text="{Binding CategoryTranslated}"
                                  FontSize="11"
                                  Foreground="#6B6B80"/>
                     </StackPanel>
@@ -545,7 +557,8 @@
               <StackPanel Grid.Column="0" VerticalAlignment="Center">
                 <TextBlock FontSize="13" Foreground="#9CA3AF">
                   <TextBlock.Text>
-                    <MultiBinding StringFormat="Do usunięcia: {0}  ·  Rozmiar: {1}">
+                    <MultiBinding Converter="{x:Static loc:LocalizedFormatConverter.Instance}">
+                      <Binding Path="[Phase3_DeleteSummary]" Source="{x:Static loc:LanguageService.Instance}" />
                       <Binding Path="FoundItems.Count"/>
                       <Binding Path="SelectedSizeLabel"/>
                     </MultiBinding>
@@ -554,17 +567,16 @@
               </StackPanel>
               <Button Grid.Column="1"
                       Classes="ghost-btn"
-                      Command="{Binding ResetCommand}">
-                Anuluj
-              </Button>
+                      Command="{Binding ResetCommand}"
+                      Content="{Binding [Phase3_CancelBtn], Source={x:Static loc:LanguageService.Instance}}" />
               <Button Grid.Column="2"
                       Classes="ghost-btn"
                       Command="{Binding BackupOnlyCommand}"
                       IsEnabled="{Binding BackupEnabled}"
-                      ToolTip.Tip="Wymaga wybranego folderu kopii zapasowej">
+                      >
                 <StackPanel Orientation="Horizontal" Spacing="6">
                   <TextBlock Text="🔒" FontSize="14"/>
-                  <TextBlock Text="Tylko kopia"/>
+                  <TextBlock Text="{Binding [Phase3_BackupOnlyBtn], Source={x:Static loc:LanguageService.Instance}}"/>
                 </StackPanel>
               </Button>
               <Button Grid.Column="3"
@@ -573,7 +585,7 @@
                       IsEnabled="{Binding CanDelete}">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <TextBlock Text="🗑" FontSize="15"/>
-                  <TextBlock Text="Usuń zaznaczone"/>
+                  <TextBlock Text="{Binding [Phase3_DeleteSelectedBtn], Source={x:Static loc:LanguageService.Instance}}"/>
                 </StackPanel>
               </Button>
             </Grid>
@@ -589,7 +601,7 @@
                 ConverterParameter={x:Static vm:AppPhase.Deleting}}">
           <StackPanel Grid.Row="1" HorizontalAlignment="Center" Spacing="20">
             <TextBlock Text="🗑️" FontSize="48" HorizontalAlignment="Center"/>
-            <TextBlock Text="Usuwam pliki…"
+            <TextBlock Text="{Binding [Phase4_Deleting], Source={x:Static loc:LanguageService.Instance}}"
                        FontSize="22" FontWeight="Bold"
                        Foreground="#F3F4F6"
                        HorizontalAlignment="Center"/>
@@ -641,7 +653,7 @@
                     CornerRadius="8" Padding="14,10">
               <Grid ColumnDefinitions="*,Auto">
                 <StackPanel Grid.Column="0" Spacing="3">
-                  <TextBlock Text="🔒  Kopia zapasowa zapisana:" FontSize="12"
+                  <TextBlock Text="{Binding [Phase5_BackupSaved], Source={x:Static loc:LanguageService.Instance}}" FontSize="12"
                              FontWeight="SemiBold" Foreground="#86EFAC"/>
                   <TextBlock Text="{Binding CreatedManifestPath}"
                              FontSize="11" FontFamily="Menlo,Consolas,monospace"
@@ -649,9 +661,8 @@
                 </StackPanel>
                 <Button Grid.Column="1" Classes="ghost-btn" Margin="12,0,0,0"
                         Command="{Binding LoadCreatedManifestAndReviewCommand}"
-                        Padding="10,6" FontSize="11">
-                  Podgląd →
-                </Button>
+                        Padding="10,6" FontSize="11"
+                        Content="{Binding [Phase5_PreviewBtn], Source={x:Static loc:LanguageService.Instance}}" />
               </Grid>
             </Border>
 
@@ -666,7 +677,7 @@
               </ScrollViewer>
             </Border>
             <TextBlock IsVisible="{Binding HasErrors}"
-                       Text="💡 Pliki systemowe wymagają uprawnień administratora (uruchom z sudo)."
+                       Text="{Binding [Phase5_SystemFilesHint], Source={x:Static loc:LanguageService.Instance}}"
                        FontSize="12" Foreground="#6B7280" TextWrapping="Wrap"
                        TextAlignment="Center"/>
 
@@ -674,11 +685,11 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center"
                         Spacing="12" Margin="0,8,0,0">
               <Button Classes="ghost-btn" Command="{Binding BackToResultsCommand}"
-                      IsVisible="{Binding HasErrors}">← Wróć do wyników</Button>
+                      IsVisible="{Binding HasErrors}" Content="{Binding [Phase5_BackToResultsBtn], Source={x:Static loc:LanguageService.Instance}}" />
               <Button Classes="action-btn" Command="{Binding ResetCommand}">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <TextBlock Text="🔄"/>
-                  <TextBlock Text="Nowe wyszukiwanie"/>
+                  <TextBlock Text="{Binding [Phase3_NewSearchBtn], Source={x:Static loc:LanguageService.Instance}}"/>
                 </StackPanel>
               </Button>
             </StackPanel>
@@ -694,7 +705,7 @@
                 ConverterParameter={x:Static vm:AppPhase.BackingUp}}">
           <StackPanel Grid.Row="1" HorizontalAlignment="Center" Spacing="20">
             <TextBlock Text="🔒" FontSize="48" HorizontalAlignment="Center"/>
-            <TextBlock Text="Tworzę kopię zapasową…" FontSize="22" FontWeight="Bold"
+            <TextBlock Text="{Binding [Phase5b_BackingUp], Source={x:Static loc:LanguageService.Instance}}" FontSize="22" FontWeight="Bold"
                        Foreground="#F3F4F6" HorizontalAlignment="Center"/>
             <ProgressBar IsIndeterminate="True" Width="320" Height="4"
                          Foreground="#7C3AED" Background="#1F1F2E" CornerRadius="2"/>
@@ -702,7 +713,7 @@
           <TextBlock Grid.Row="2" Text="{Binding BackupProgressText}"
                      FontSize="12" Foreground="#6B6B80" HorizontalAlignment="Center"
                      Margin="0,12,0,0" MaxWidth="520" TextTrimming="CharacterEllipsis"/>
-          <TextBlock Grid.Row="3" Text="Nie zamykaj programu — kopia jest tworzona…"
+          <TextBlock Grid.Row="3" Text="{Binding [Phase5b_WaitHint], Source={x:Static loc:LanguageService.Instance}}"
                      FontSize="11" Foreground="#4B5563" HorizontalAlignment="Center"
                      Margin="0,6,0,0"/>
         </Grid>
@@ -716,24 +727,22 @@
                 ConverterParameter={x:Static vm:AppPhase.RestoreSelect}}">
 
           <StackPanel Grid.Row="0" Margin="0,0,0,24">
-            <TextBlock Text="Przywróć kopię zapasową" FontSize="26" FontWeight="Bold"
+            <TextBlock Text="{Binding [Phase6_RestoreTitle], Source={x:Static loc:LanguageService.Instance}}" FontSize="26" FontWeight="Bold"
                        Foreground="#F3F4F6"/>
-            <TextBlock FontSize="13" Foreground="#6B6B80" Margin="0,6,0,0" TextWrapping="Wrap">
-              Wybierz plik manifestu (VSTDeleter_manifest.json) z folderu kopii.
-              Manifest zawiera mapę wszystkich plików i ich oryginalnych lokalizacji.
-            </TextBlock>
+            <TextBlock FontSize="13" Foreground="#6B6B80" Margin="0,6,0,0" TextWrapping="Wrap"
+                       Text="{Binding [Phase6_RestoreSub], Source={x:Static loc:LanguageService.Instance}}" />
           </StackPanel>
 
           <Border Grid.Row="1" Background="#13131D" CornerRadius="12" Padding="32">
             <StackPanel Spacing="20" VerticalAlignment="Center" HorizontalAlignment="Center">
               <TextBlock Text="📂" FontSize="52" HorizontalAlignment="Center"/>
-              <TextBlock Text="Kliknij poniżej, aby wybrać manifest kopii"
+              <TextBlock Text="{Binding [Phase6_RestoreClickBelow], Source={x:Static loc:LanguageService.Instance}}"
                          FontSize="14" Foreground="#9CA3AF" HorizontalAlignment="Center"/>
               <Button Classes="action-btn" Command="{Binding ChooseManifestFileCommand}"
                       HorizontalAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <TextBlock Text="📁"/>
-                  <TextBlock Text="Wybierz VSTDeleter_manifest.json"/>
+                  <TextBlock Text="{Binding [Phase6_ChooseManifestBtn], Source={x:Static loc:LanguageService.Instance}}"/>
                 </StackPanel>
               </Button>
 
@@ -742,7 +751,7 @@
                       Background="#0D1A0D" BorderBrush="#14532D" BorderThickness="1"
                       CornerRadius="8" Padding="14,10">
                 <StackPanel Spacing="6">
-                  <TextBlock Text="✓  Manifest wczytany poprawnie:" FontSize="12"
+                  <TextBlock Text="{Binding [Phase6_ManifestLoaded], Source={x:Static loc:LanguageService.Instance}}" FontSize="12"
                              FontWeight="SemiBold" Foreground="#86EFAC"/>
                   <TextBlock Text="{Binding RestoreHeaderInfo}" FontSize="12"
                              Foreground="#6EE7B7"/>
@@ -758,12 +767,12 @@
 
           <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto" Margin="0,16,0,0">
             <Button Grid.Column="0" Classes="ghost-btn"
-                    Command="{Binding BackToSearchFromRestoreCommand}">← Wróć</Button>
+                    Command="{Binding BackToSearchFromRestoreCommand}" Content="{Binding [Phase6_BackBtn], Source={x:Static loc:LanguageService.Instance}}" />
             <Button Grid.Column="2" Classes="action-btn"
                     Command="{Binding LoadManifestAndReviewCommand}"
                     IsEnabled="{Binding HasLoadedManifest}">
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBlock Text="Podgląd i przywracanie"/>
+                <TextBlock Text="{Binding [Phase6_PreviewRestoreBtn], Source={x:Static loc:LanguageService.Instance}}"/>
                 <TextBlock Text="→"/>
               </StackPanel>
             </Button>
@@ -781,14 +790,14 @@
           <!-- Nagłówek -->
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
             <StackPanel Grid.Column="0">
-              <TextBlock Text="Podgląd przywracania" FontSize="22" FontWeight="Bold"
+              <TextBlock Text="{Binding [Phase7_ReviewTitle], Source={x:Static loc:LanguageService.Instance}}" FontSize="22" FontWeight="Bold"
                          Foreground="#F3F4F6"/>
               <TextBlock Text="{Binding RestoreHeaderInfo}" FontSize="12"
                          Foreground="#6B6B80" Margin="0,4,0,0"/>
             </StackPanel>
             <Button Grid.Column="1" Classes="ghost-btn"
                     Command="{Binding BackToRestoreSelectCommand}"
-                    VerticalAlignment="Top">← Wróć</Button>
+                    VerticalAlignment="Top" Content="{Binding [Phase6_BackBtn], Source={x:Static loc:LanguageService.Instance}}" />
           </Grid>
 
           <!-- Info o katalogu kopii -->
@@ -797,7 +806,7 @@
             <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="📂" VerticalAlignment="Center"/>
               <StackPanel Spacing="2">
-                <TextBlock Text="Folder kopii:" FontSize="11" FontWeight="SemiBold"
+                <TextBlock Text="{Binding [Phase7_BackupFolderLabel], Source={x:Static loc:LanguageService.Instance}}" FontSize="11" FontWeight="SemiBold"
                            Foreground="#6B6B80"/>
                 <TextBlock Text="{Binding LoadedManifest.BackupFolder}"
                            FontSize="11" FontFamily="Menlo,Consolas,monospace"
@@ -819,7 +828,7 @@
                         <TextBlock Text="{Binding ShortOriginalPath}"
                                    FontSize="12" FontFamily="Menlo,Consolas,monospace"
                                    Foreground="#E5E7EB" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Text="{Binding Category}" FontSize="11" Foreground="#6B6B80"/>
+                        <TextBlock Text="{Binding CategoryTranslated}" FontSize="11" Foreground="#6B6B80"/>
                       </StackPanel>
                       <TextBlock Grid.Column="3" Text="{Binding SizeFormatted}"
                                  FontSize="12" Foreground="#7C3AED" FontWeight="SemiBold"
@@ -835,7 +844,7 @@
           <!-- Dolny pasek -->
           <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto" Margin="0,14,0,0">
             <Button Grid.Column="0" Classes="ghost-btn"
-                    Command="{Binding BackToSearchFromRestoreCommand}">Anuluj</Button>
+                    Command="{Binding BackToSearchFromRestoreCommand}" Content="{Binding [Phase3_CancelBtn], Source={x:Static loc:LanguageService.Instance}}" />
             <TextBlock Grid.Column="1" Text="Pliki zostaną skopiowane z kopii na oryginalne ścieżki."
                        FontSize="11" Foreground="#4B5563" VerticalAlignment="Center"
                        HorizontalAlignment="Center" TextWrapping="Wrap" MaxWidth="260"
