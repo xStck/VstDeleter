@@ -1,4 +1,5 @@
 using VstDeleter.Models;
+using VstDeleter.Helpers;
 
 namespace VstDeleter.Services;
 
@@ -14,6 +15,11 @@ public static class PluginScanner
     {
         if (string.IsNullOrWhiteSpace(pluginName) || pluginName.Trim().Length < 2)
             throw new ArgumentException(LanguageService.Instance["Err_TooShort"]);
+
+        string pNameLow = pluginName.ToLower().Trim();
+        string[] blockedTerms = { "apple", "mac", "macos", "system", "library", "usr", "bin", "var", "etc", "com", "org", "net", "app", "application" };
+        if (blockedTerms.Contains(pNameLow))
+            throw new ArgumentException("Wyszukiwana fraza jest zbyt ogólna lub zablokowana ze względów bezpieczeństwa.");
 
         string[] invalidChars = { "/", "\\", ".", "*", "?", "<", ">", "|", ":" };
         foreach (var c in invalidChars)
@@ -191,7 +197,11 @@ public static class PluginScanner
                         // Systemowa Czarna Lista (Blacklist)
                         if (fileName.StartsWith("com.apple.") || 
                             fileName.StartsWith("org.cups.") || 
-                            fileName.StartsWith("com.microsoft."))
+                            fileName.StartsWith("com.microsoft.") ||
+                            fileName.Equals("apple") ||
+                            fileName.Equals("mac") ||
+                            fileName.Equals("system") ||
+                            fileName.Equals("library"))
                         {
                             continue;
                         }
@@ -252,11 +262,19 @@ public static class PluginScanner
         try
         {
             var options = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true };
-            foreach (string f in Directory.EnumerateFiles(path, "*", options))
+            
+            var enumerable = new System.IO.Enumeration.FileSystemEnumerable<long>(
+                path,
+                (ref System.IO.Enumeration.FileSystemEntry entry) => entry.Length,
+                options)
+            {
+                ShouldIncludePredicate = (ref System.IO.Enumeration.FileSystemEntry entry) => !entry.IsDirectory
+            };
+
+            foreach (var size in enumerable)
             {
                 ct.ThrowIfCancellationRequested();
-                try { total += new FileInfo(f).Length; } 
-                catch (Exception ex) { AppLogger.Log($"[GetDirectorySize]: {ex.ToString()}"); }
+                total += size;
             }
         }
         catch (OperationCanceledException) { throw; }
@@ -284,6 +302,14 @@ public static class PluginScanner
                 try
                 {
                     progress?.Report(item.ShortPath);
+                    if (!IsPathSafeToDelete(item.Path))
+                    {
+                        AppLogger.Log($"[ZABEZPIECZENIE] Odmowa usunięcia krytycznej ścieżki (Native): '{item.Path}'");
+                        errorMessages.Add($"[Zabezpieczenie] Odmowa usunięcia krytycznej ścieżki: {item.Path}");
+                        errors++;
+                        continue;
+                    }
+
                     if (item.IsDirectory)
                         Directory.Delete(item.Path, recursive: true);
                     else
@@ -324,7 +350,7 @@ public static class PluginScanner
                                 string ext = fileName.EndsWith(".bom") ? ".bom" : ".plist";
                                 string pkgId = fileName.Substring(0, fileName.Length - ext.Length);
                                 
-                                bashLines.Add($"pkgutil --forget '{pkgId.Replace("'", "'\\''")}' || true");
+                                bashLines.Add($"pkgutil --forget '{BashHelpers.Escape(pkgId)}' || true");
                             }
                         }
                         else
@@ -335,56 +361,60 @@ public static class PluginScanner
 
                     foreach (var p in rmPaths)
                     {
-                        bashLines.Add($"rm -rf '{p.Replace("'", "'\\''")}'");
+                        if (!IsPathSafeToDelete(p))
+                        {
+                            AppLogger.Log($"[ZABEZPIECZENIE] Odmowa wygenerowania komendy rm -rf dla ścieżki: '{p}' (krytyczna dla systemu)");
+                            errorMessages.Add($"[Zabezpieczenie] Odmowa usunięcia krytycznej ścieżki: {p}");
+                            errors++;
+                            continue;
+                        }
+                        
+                        bashLines.Add($"rm -rf '{BashHelpers.Escape(p)}'");
                     }
 
-                    string bashCommand = string.Join(" ; ", bashLines);
-                    string scriptPath = Path.GetTempFileName();
-                    
-                    try
+                    if (bashLines.Count == 0)
                     {
-                        await File.WriteAllTextAsync(scriptPath, bashCommand, ct);
-
+                        // Wszystkie ścieżki sudo zostały odrzucone przez blacklist
+                    }
+                    else
+                    {
+                        int actualSudoCommands = bashLines.Count;
+                        string bashCommand = string.Join(" && ", bashLines);
                         var psi = new System.Diagnostics.ProcessStartInfo
                         {
                             FileName = "osascript",
                             UseShellExecute = false,
+                            RedirectStandardInput = true,
                             RedirectStandardOutput = false,
                             RedirectStandardError = true
                         };
                         
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("on run argv");
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("do shell script \"/bin/sh '\" & item 1 of argv & \"'\" with administrator privileges");
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("end run");
-                        psi.ArgumentList.Add(scriptPath);
-                        
                         using var proc = System.Diagnostics.Process.Start(psi);
                         if (proc != null)
                         {
+                            using var ctr = ct.Register(() => { try { proc.Kill(true); } catch { } });
+                            
+                            string safeBashCommand = bashCommand.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                            await proc.StandardInput.WriteAsync($"do shell script \"{safeBashCommand}\" with administrator privileges");
+                            proc.StandardInput.Close();
+
                             string err = await proc.StandardError.ReadToEndAsync();
-                            await proc.WaitForExitAsync();
+                            await proc.WaitForExitAsync(ct);
                             if (proc.ExitCode == 0)
                             {
-                                ok += sudoPaths.Count;
+                                ok += actualSudoCommands;
                             }
                             else
                             {
-                                errors += sudoPaths.Count;
+                                errors += actualSudoCommands;
                                 errorMessages.Add($"Odmowa dostępu / błąd sudo: {err.Trim()}");
                             }
                         }
                         else
                         {
-                            errors += sudoPaths.Count;
+                            errors += actualSudoCommands;
                             errorMessages.Add("Nie udało się uruchomić osascript.");
                         }
-                    }
-                    finally
-                    {
-                        if (File.Exists(scriptPath)) File.Delete(scriptPath);
                     }
                 }
                 catch (System.ComponentModel.Win32Exception ex)
@@ -409,6 +439,51 @@ public static class PluginScanner
 
             return new DeleteResult(ok, errors, errorMessages);
         }, ct);
+    }
+
+    public static bool IsPathSafeToDelete(string p)
+    {
+        string safePath = p.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(safePath) || safePath.Length < 12) return false;
+
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        string[] criticalDirectories = {
+            "/Library", "/System", "/Users", "/Applications", "/private", "/bin", "/sbin", "/usr", "/Volumes", "/Network",
+            "/Library/Application Support", "/Library/Preferences", "/Library/Caches", "/Library/Logs",
+            "/Library/Audio", "/Library/Audio/Plug-Ins", "/Library/Audio/Plug-Ins/VST",
+            "/Library/Audio/Plug-Ins/VST3", "/Library/Audio/Plug-Ins/Components",
+            "/Library/Audio/Plug-Ins/CLAP", "/Library/Audio/Plug-Ins/HAL",
+            "/Library/Audio/Plug-Ins/WPAPI", "/Library/Audio/Plug-Ins/MAS",
+            "/Library/Application Support/Avid", "/Library/Application Support/Avid/Audio", 
+            "/Library/Application Support/Avid/Audio/Plug-Ins",
+            "/Library/Application Support/Apple", "/Library/Application Support/CrashReporter",
+            "/Users/Shared",
+            home,
+            $"{home}/Library",
+            $"{home}/Library/Application Support",
+            $"{home}/Library/Application Support/Apple",
+            $"{home}/Library/Application Support/CrashReporter",
+            $"{home}/Library/Preferences",
+            $"{home}/Library/Caches",
+            $"{home}/Library/Logs",
+            $"{home}/Library/Audio",
+            $"{home}/Documents",
+            $"{home}/Downloads",
+            $"{home}/Desktop",
+            $"{home}/Pictures",
+            $"{home}/Music",
+            $"{home}/Movies"
+        };
+
+        foreach (var dir in criticalDirectories)
+        {
+            if (safePath.Equals(dir, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 }
 

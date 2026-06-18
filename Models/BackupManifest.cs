@@ -60,15 +60,9 @@ public partial class BackupEntry : CommunityToolkit.Mvvm.ComponentModel.Observab
 
     [JsonIgnore] public string CategoryTranslated => Services.LanguageService.Instance[Category];
 
-    public BackupEntry()
+    public void RefreshTranslation()
     {
-        Services.LanguageService.Instance.PropertyChanged += (s, e) =>
-        {
-            if (e.PropertyName == "CurrentLanguage" || e.PropertyName == "Item")
-            {
-                OnPropertyChanged(nameof(CategoryTranslated));
-            }
-        };
+        OnPropertyChanged(nameof(CategoryTranslated));
     }
 
     /// <summary>Rozmiar w bajtach.</summary>

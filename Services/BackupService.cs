@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Encodings.Web;
+using VstDeleter.Helpers;
 using VstDeleter.Models;
 
 namespace VstDeleter.Services;
@@ -43,56 +44,77 @@ public static class BackupService
         var entries = new List<BackupEntry>();
         int errorsCount = 0;
 
-        foreach (var item in items)
+        try
         {
-            ct.ThrowIfCancellationRequested();
-
-            // Ścieżka relatywna: usuwa wiodący '/' → staje się podkatalogiem w backupDir
-            string relativePath = item.Path.TrimStart('/');
-            string targetPath   = Path.Combine(backupDir, relativePath);
-
-            try
+            foreach (var item in items)
             {
-                progress?.Report(item.ShortPath);
+                ct.ThrowIfCancellationRequested();
 
-                await DittoCopyAsync(item.Path, targetPath, ct);
+                // Ścieżka relatywna: usuwa wiodący '/' → staje się podkatalogiem w backupDir
+                string relativePath = item.Path.TrimStart('/');
+                string targetPath   = Path.Combine(backupDir, relativePath);
 
-                entries.Add(new BackupEntry
+                try
                 {
-                    OriginalAbsolutePath = item.Path,
-                    BackupRelativePath   = relativePath,
-                    Type                 = item.IsDirectory ? "directory" : "file",
-                    Category             = item.Category,
-                    SizeBytes            = item.SizeBytes
-                });
+                    progress?.Report(item.ShortPath);
+
+                    await DittoCopyAsync(item.Path, targetPath, ct);
+
+                    entries.Add(new BackupEntry
+                    {
+                        OriginalAbsolutePath = item.Path,
+                        BackupRelativePath   = relativePath,
+                        Type                 = item.IsDirectory ? "directory" : "file",
+                        Category             = item.Category,
+                        SizeBytes            = item.SizeBytes
+                    });
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    errorsCount++;
+                    AppLogger.Log($"[backup] {item.Path}: {ex.ToString()}");
+                }
             }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
+
+            if (errorsCount > 0)
             {
-                errorsCount++;
-                AppLogger.Log($"[backup] {item.Path}: {ex.ToString()}");
+                throw new Exception($"Zakończono z błędami. {errorsCount} element(ów) nie zostało skopiowanych. Zatrzymano operację, aby zapobiec utracie danych.");
             }
+
+            // Zapis manifestu
+            var manifest = new BackupManifest
+            {
+                PluginName  = pluginName,
+                Created     = DateTimeOffset.Now,
+                BackupFolder = backupDir,
+                Entries     = entries
+            };
+
+            string manifestPath = Path.Combine(backupDir, ManifestFileName);
+            string json = JsonSerializer.Serialize(manifest, JsonOptions);
+            await File.WriteAllTextAsync(manifestPath, json, System.Text.Encoding.UTF8, ct);
+
+            return manifestPath;
         }
-
-        if (errorsCount > 0)
+        catch
         {
-            throw new Exception($"Zakończono z błędami. {errorsCount} element(ów) nie zostało skopiowanych. Zatrzymano operację, aby zapobiec utracie danych.");
+            // Ochrona przed dyskowymi "sierotami". Jeżeli cokolwiek pękło przed pomyślnym zapisaniem json'a
+            // usuwamy nowostworzony katalog z dysku, zwalniając miejsce (niedokończony backup i tak nie zadziała).
+            if (Directory.Exists(backupDir))
+            {
+                try
+                {
+                    Directory.Delete(backupDir, true);
+                }
+                catch (Exception cleanupEx)
+                {
+                    AppLogger.Log($"[backup] Krytyczne: nie udało się usunąć uszkodzonego folderu kopii: {cleanupEx.Message}");
+                }
+            }
+            
+            throw; // Przerzucamy wyżej, by UI wiedziało o awarii
         }
-
-        // Zapis manifestu
-        var manifest = new BackupManifest
-        {
-            PluginName  = pluginName,
-            Created     = DateTimeOffset.Now,
-            BackupFolder = backupDir,
-            Entries     = entries
-        };
-
-        string manifestPath = Path.Combine(backupDir, ManifestFileName);
-        string json = JsonSerializer.Serialize(manifest, JsonOptions);
-        await File.WriteAllTextAsync(manifestPath, json, System.Text.Encoding.UTF8, ct);
-
-        return manifestPath;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -175,6 +197,13 @@ public static class BackupService
                     continue;
                 }
 
+                if (!PluginScanner.IsPathSafeToDelete(destPath))
+                {
+                    skipped++;
+                    AppLogger.Log($"[Ochrona] Zablokowano próbę modyfikacji krytycznej ścieżki (Podatność JSON): {destPath}");
+                    continue;
+                }
+
                 try
                 {
                     progress?.Report(entry.ShortOriginalPath);
@@ -202,84 +231,77 @@ public static class BackupService
                 {
                     progress?.Report("Wymagane uprawnienia administratora do przywrócenia...");
                     
-                    var bashLines = new List<string>();
+                    var taskCommands = new List<string>();
                     string currentUser = Environment.UserName;
                     
                     foreach (var task in sudoCopyTasks)
                     {
-                        string safeSource = $"'{task.source.Replace("'", "'\\''")}'";
+                        var singleTaskLines = new List<string>();
+                        string safeSource = $"'{BashHelpers.Escape(task.source)}'";
                         
                         string destDir = Path.GetDirectoryName(task.dest) ?? "";
-                        string safeDestDir = $"'{destDir.Replace("'", "'\\''")}'";
+                        string safeDestDir = $"'{BashHelpers.Escape(destDir)}'";
                         
-                        string safeDest = $"'{task.dest.Replace("'", "'\\''")}'";
+                        string safeDest = $"'{BashHelpers.Escape(task.dest)}'";
 
-                        bashLines.Add($"mkdir -p {safeDestDir}");
-                        bashLines.Add($"ditto {safeSource} {safeDest}");
+                        singleTaskLines.Add($"mkdir -p {safeDestDir}");
+                        singleTaskLines.Add($"ditto {safeSource} {safeDest}");
                         
                         if (task.dest.StartsWith("/Library/") || task.dest.StartsWith("/Applications/"))
                         {
-                            bashLines.Add($"chown -R root:wheel {safeDest}");
+                            singleTaskLines.Add($"chown -R root:wheel {safeDest}");
                         }
                         else
                         {
-                            bashLines.Add($"chown -R {currentUser}:staff {safeDest}");
+                            singleTaskLines.Add($"chown -R '{BashHelpers.Escape(currentUser)}':staff {safeDest}");
                         }
+                        
+                        taskCommands.Add("(" + string.Join(" && ", singleTaskLines) + ")");
                     }
                     
-                    string bashCommand = string.Join(" ; ", bashLines);
-                    string scriptPath = Path.GetTempFileName();
+                    string bashCommand = string.Join(" && ", taskCommands);
+                    int actualSudoCommands = taskCommands.Count;
                     
-                    try
-                    {
-                        await File.WriteAllTextAsync(scriptPath, bashCommand, ct);
-
                         var psi = new System.Diagnostics.ProcessStartInfo
                         {
                             FileName = "osascript",
                             UseShellExecute = false,
+                            RedirectStandardInput = true,
                             RedirectStandardOutput = false,
                             RedirectStandardError = true
                         };
                         
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("on run argv");
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("do shell script \"/bin/sh '\" & item 1 of argv & \"'\" with administrator privileges");
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("end run");
-                        psi.ArgumentList.Add(scriptPath);
-                        
                         using var proc = System.Diagnostics.Process.Start(psi);
                         if (proc != null)
                         {
+                            using var ctr = ct.Register(() => { try { proc.Kill(true); } catch { } });
+                            
+                            string safeBashCommand = bashCommand.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                            await proc.StandardInput.WriteAsync($"do shell script \"{safeBashCommand}\" with administrator privileges");
+                            proc.StandardInput.Close();
+
                             string err = await proc.StandardError.ReadToEndAsync();
-                            await proc.WaitForExitAsync();
+                            await proc.WaitForExitAsync(ct);
                             
                             if (proc.ExitCode == 0)
                             {
-                                ok += sudoCopyTasks.Count;
+                                ok += actualSudoCommands;
                             }
                             else
                             {
-                                errors += sudoCopyTasks.Count;
+                                errors += actualSudoCommands;
                                 errorMessages.Add($"Odmowa dostępu / błąd sudo przy przywracaniu: {err.Trim()}");
                             }
                         }
                         else
                         {
-                            errors += sudoCopyTasks.Count;
+                            errors += actualSudoCommands;
                             errorMessages.Add("Nie udało się uruchomić osascript (sudo).");
                         }
-                    }
-                    finally
-                    {
-                        if (File.Exists(scriptPath)) File.Delete(scriptPath);
-                    }
                 }
                 catch (System.ComponentModel.Win32Exception ex)
                 {
-                    errors += sudoCopyTasks.Count;
+                    errors += sudoCopyTasks.Count;  // fallback: nie wiemy ile komend wygenerowano
                     errorMessages.Add($"Brak programu osascript w systemie (przywracanie): {ex.Message}");
                     AppLogger.Log($"[restore sudo] osascript missing: {ex.ToString()}");
                 }
@@ -311,6 +333,23 @@ public static class BackupService
         if (!string.IsNullOrEmpty(destDir))
         {
             Directory.CreateDirectory(destDir);
+        }
+
+        if (File.Exists(source))
+        {
+            try
+            {
+                await Task.Run(() => File.Copy(source, dest, true), ct);
+                return;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw; // Let it bubble up so sudo logic can take over
+            }
+            catch (Exception)
+            {
+                // If native copy fails for other reasons, fallback to ditto just in case
+            }
         }
 
         var psi = new System.Diagnostics.ProcessStartInfo

@@ -30,16 +30,10 @@ public partial class FoundItem : ObservableObject
     public string Category { get; init; } = "Inne";
     public string CategoryTranslated => Services.LanguageService.Instance[Category];
 
-    public FoundItem()
+    public void RefreshTranslation()
     {
-        Services.LanguageService.Instance.PropertyChanged += (s, e) =>
-        {
-            if (e.PropertyName == "CurrentLanguage" || e.PropertyName == "Item")
-            {
-                OnPropertyChanged(nameof(CategoryTranslated));
-                OnPropertyChanged(nameof(TypeLabel));
-            }
-        };
+        OnPropertyChanged(nameof(CategoryTranslated));
+        OnPropertyChanged(nameof(TypeLabel));
     }
 
     private static string FormatSize(long bytes)

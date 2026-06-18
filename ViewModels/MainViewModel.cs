@@ -4,6 +4,7 @@ using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VstDeleter.Models;
+using VstDeleter.Helpers;
 using VstDeleter.Services;
 
 namespace VstDeleter.ViewModels;
@@ -171,6 +172,20 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         LanguageService.Instance.ToggleLanguage();
         OnPropertyChanged(nameof(CurrentLanguageTarget));
+        OnPropertyChanged(nameof(SelectedLocalPluginFormatsText));
+        
+        foreach (var item in FoundItems)
+        {
+            item.RefreshTranslation();
+        }
+        
+        if (LoadedManifest != null)
+        {
+            foreach (var entry in LoadedManifest.Entries)
+            {
+                entry.RefreshTranslation();
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────────────
@@ -180,8 +195,22 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         Services.AppLogger.OnLog -= OnLogReceived;
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); _cts = null; }
+        DetachFoundItemHandlers();
+        if (_cts != null) { try { _cts.Cancel(); _cts.Dispose(); } catch { } _cts = null; }
         GC.SuppressFinalize(this);
+    }
+
+    private void OnFoundItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (_isBulkUpdating) return;
+        RecalcSelectedSize();
+        OnPropertyChanged(nameof(BackupSizeInfo));
+    }
+
+    private void DetachFoundItemHandlers()
+    {
+        foreach (var item in FoundItems)
+            item.PropertyChanged -= OnFoundItemPropertyChanged;
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -222,16 +251,17 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         ShowSuggestions = false;
         Phase           = AppPhase.Scanning;
         ScanStatus      = $"Szukam śladów: {plugin}…";
+        DetachFoundItemHandlers();
         FoundItems.Clear();
         AppLogs.Clear();
 
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        if (_cts != null) { try { _cts.Cancel(); _cts.Dispose(); } catch { } }
         _cts = new CancellationTokenSource();
 
         var currentToken = _cts.Token;
 
-        var progress = new Progress<string>(p =>
-            ScanStatus = $"Sprawdzam: {ShortenPath(p)}");
+        using var progress = new ThrottledProgress<string>(new Progress<string>(p =>
+            ScanStatus = $"Sprawdzam: {ShortenPath(p)}"), TimeSpan.FromMilliseconds(50));
 
         try
         {
@@ -239,12 +269,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
 
             foreach (var item in items)
             {
-                item.PropertyChanged += (_, _) =>
-                {
-                    if (_isBulkUpdating) return;
-                    RecalcSelectedSize();
-                    OnPropertyChanged(nameof(BackupSizeInfo));
-                };
+                item.PropertyChanged += OnFoundItemPropertyChanged;
                 FoundItems.Add(item);
             }
 
@@ -266,6 +291,15 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             if (_cts != null && _cts.Token == currentToken)
             {
                 Phase = AppPhase.Search;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase = AppPhase.Search;
+                ScanStatus = $"⚠ Błąd krytyczny: {ex.Message}";
+                AppLogs.Insert(0, $"[{DateTime.Now:HH:mm:ss}] [StartScanAsync] {ex}");
             }
         }
     }
@@ -336,7 +370,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         var toBackup = FoundItems.Where(i => i.IsSelected).ToList();
         if (toBackup.Count == 0) return;
 
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        if (_cts != null) { try { _cts.Cancel(); _cts.Dispose(); } catch { } }
         _cts = new CancellationTokenSource();
 
         var currentToken = _cts.Token;
@@ -346,11 +380,11 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         CreatedManifestPath = string.Empty;
 
         int done = 0;
-        var progress = new Progress<string>(p =>
+        using var progress = new ThrottledProgress<string>(new Progress<string>(p =>
         {
             done++;
             BackupProgressText = $"[{done}/{toBackup.Count}]  {p}";
-        });
+        }), TimeSpan.FromMilliseconds(50));
 
         try
         {
@@ -394,7 +428,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         var toDelete = FoundItems.Where(i => i.IsSelected).ToList();
         if (toDelete.Count == 0) return;
 
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        if (_cts != null) { try { _cts.Cancel(); _cts.Dispose(); } catch { } }
         _cts = new CancellationTokenSource();
 
         var currentToken = _cts.Token;
@@ -416,11 +450,11 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             CreatedManifestPath = string.Empty;
 
             int done = 0;
-            var backupProgress = new Progress<string>(p =>
+            using var backupProgress = new ThrottledProgress<string>(new Progress<string>(p =>
             {
                 done++;
                 BackupProgressText = $"[{done}/{toDelete.Count}]  {p}";
-            });
+            }), TimeSpan.FromMilliseconds(50));
 
             try
             {
@@ -455,11 +489,11 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         ErrorDetails = string.Empty;
 
         int delDone = 0;
-        var delProgress = new Progress<string>(p =>
+        using var delProgress = new ThrottledProgress<string>(new Progress<string>(p =>
         {
             delDone++;
             DeleteProgress = $"[{delDone}/{toDelete.Count}]  {p}";
-        });
+        }), TimeSpan.FromMilliseconds(50));
 
         try
         {
@@ -484,6 +518,17 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             if (_cts != null && _cts.Token == currentToken)
             {
                 Phase = AppPhase.Results;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase = AppPhase.Done;
+                HasErrors = true;
+                ErrorDetails = ex.Message;
+                DeleteStatus = "⚠ Błąd krytyczny podczas usuwania.";
+                AppLogs.Insert(0, $"[{DateTime.Now:HH:mm:ss}] [DeleteSelectedAsync] {ex}");
             }
         }
     }
@@ -585,18 +630,18 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         RestoreErrorDetails = string.Empty;
         AppLogs.Clear();
 
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        if (_cts != null) { try { _cts.Cancel(); _cts.Dispose(); } catch { } }
         _cts = new CancellationTokenSource();
 
         var currentToken = _cts.Token;
 
         int done = 0;
         int total = LoadedManifest.Entries.Count;
-        var progress = new Progress<string>(p =>
+        using var progress = new ThrottledProgress<string>(new Progress<string>(p =>
         {
             done++;
             RestoreProgressText = $"[{done}/{total}]  {p}";
-        });
+        }), TimeSpan.FromMilliseconds(50));
 
         try
         {
@@ -635,6 +680,15 @@ public partial class MainViewModel : ViewModelBase, IDisposable
                 Phase = AppPhase.RestoreSelect;
             }
         }
+        catch (Exception ex)
+        {
+            if (_cts != null && _cts.Token == currentToken)
+            {
+                Phase = AppPhase.RestoreSelect;
+                ManifestFilePath = $"⚠ Błąd krytyczny przywracania: {ex.Message}";
+                AppLogs.Insert(0, $"[{DateTime.Now:HH:mm:ss}] [StartRestoreAsync] {ex}");
+            }
+        }
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -643,11 +697,12 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private void Reset()
     {
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); _cts = null; }
+        if (_cts != null) { try { _cts.Cancel(); _cts.Dispose(); } catch { } _cts = null; }
         Phase              = AppPhase.Search;
         SearchText         = string.Empty;
         SelectedPlugin     = null;
         ShowSuggestions    = false;
+        DetachFoundItemHandlers();
         FoundItems.Clear();
         AppLogs.Clear();
         HasResults         = false;

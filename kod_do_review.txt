@@ -22,6 +22,7 @@ using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VstDeleter.Models;
+using VstDeleter.Helpers;
 using VstDeleter.Services;
 
 namespace VstDeleter.ViewModels;
@@ -189,6 +190,20 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         LanguageService.Instance.ToggleLanguage();
         OnPropertyChanged(nameof(CurrentLanguageTarget));
+        OnPropertyChanged(nameof(SelectedLocalPluginFormatsText));
+        
+        foreach (var item in FoundItems)
+        {
+            item.RefreshTranslation();
+        }
+        
+        if (LoadedManifest != null)
+        {
+            foreach (var entry in LoadedManifest.Entries)
+            {
+                entry.RefreshTranslation();
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────────────
@@ -198,7 +213,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         Services.AppLogger.OnLog -= OnLogReceived;
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); _cts = null; }
+        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts = null; }
         GC.SuppressFinalize(this);
     }
 
@@ -243,13 +258,13 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         FoundItems.Clear();
         AppLogs.Clear();
 
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        if (_cts != null) { try { _cts.Cancel(); } catch { } }
         _cts = new CancellationTokenSource();
 
         var currentToken = _cts.Token;
 
-        var progress = new Progress<string>(p =>
-            ScanStatus = $"Sprawdzam: {ShortenPath(p)}");
+        var progress = new ThrottledProgress<string>(new Progress<string>(p =>
+            ScanStatus = $"Sprawdzam: {ShortenPath(p)}"), TimeSpan.FromMilliseconds(50));
 
         try
         {
@@ -354,7 +369,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         var toBackup = FoundItems.Where(i => i.IsSelected).ToList();
         if (toBackup.Count == 0) return;
 
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        if (_cts != null) { try { _cts.Cancel(); } catch { } }
         _cts = new CancellationTokenSource();
 
         var currentToken = _cts.Token;
@@ -364,11 +379,11 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         CreatedManifestPath = string.Empty;
 
         int done = 0;
-        var progress = new Progress<string>(p =>
+        var progress = new ThrottledProgress<string>(new Progress<string>(p =>
         {
             done++;
             BackupProgressText = $"[{done}/{toBackup.Count}]  {p}";
-        });
+        }), TimeSpan.FromMilliseconds(50));
 
         try
         {
@@ -412,7 +427,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         var toDelete = FoundItems.Where(i => i.IsSelected).ToList();
         if (toDelete.Count == 0) return;
 
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        if (_cts != null) { try { _cts.Cancel(); } catch { } }
         _cts = new CancellationTokenSource();
 
         var currentToken = _cts.Token;
@@ -434,11 +449,11 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             CreatedManifestPath = string.Empty;
 
             int done = 0;
-            var backupProgress = new Progress<string>(p =>
+            var backupProgress = new ThrottledProgress<string>(new Progress<string>(p =>
             {
                 done++;
                 BackupProgressText = $"[{done}/{toDelete.Count}]  {p}";
-            });
+            }), TimeSpan.FromMilliseconds(50));
 
             try
             {
@@ -473,11 +488,11 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         ErrorDetails = string.Empty;
 
         int delDone = 0;
-        var delProgress = new Progress<string>(p =>
+        var delProgress = new ThrottledProgress<string>(new Progress<string>(p =>
         {
             delDone++;
             DeleteProgress = $"[{delDone}/{toDelete.Count}]  {p}";
-        });
+        }), TimeSpan.FromMilliseconds(50));
 
         try
         {
@@ -603,18 +618,18 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         RestoreErrorDetails = string.Empty;
         AppLogs.Clear();
 
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); }
+        if (_cts != null) { try { _cts.Cancel(); } catch { } }
         _cts = new CancellationTokenSource();
 
         var currentToken = _cts.Token;
 
         int done = 0;
         int total = LoadedManifest.Entries.Count;
-        var progress = new Progress<string>(p =>
+        var progress = new ThrottledProgress<string>(new Progress<string>(p =>
         {
             done++;
             RestoreProgressText = $"[{done}/{total}]  {p}";
-        });
+        }), TimeSpan.FromMilliseconds(50));
 
         try
         {
@@ -661,7 +676,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private void Reset()
     {
-        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts.Dispose(); _cts = null; }
+        if (_cts != null) { try { _cts.Cancel(); } catch { } _cts = null; }
         Phase              = AppPhase.Search;
         SearchText         = string.Empty;
         SelectedPlugin     = null;
@@ -832,15 +847,9 @@ public partial class BackupEntry : CommunityToolkit.Mvvm.ComponentModel.Observab
 
     [JsonIgnore] public string CategoryTranslated => Services.LanguageService.Instance[Category];
 
-    public BackupEntry()
+    public void RefreshTranslation()
     {
-        Services.LanguageService.Instance.PropertyChanged += (s, e) =>
-        {
-            if (e.PropertyName == "CurrentLanguage" || e.PropertyName == "Item")
-            {
-                OnPropertyChanged(nameof(CategoryTranslated));
-            }
-        };
+        OnPropertyChanged(nameof(CategoryTranslated));
     }
 
     /// <summary>Rozmiar w bajtach.</summary>
@@ -904,16 +913,10 @@ public partial class FoundItem : ObservableObject
     public string Category { get; init; } = "Inne";
     public string CategoryTranslated => Services.LanguageService.Instance[Category];
 
-    public FoundItem()
+    public void RefreshTranslation()
     {
-        Services.LanguageService.Instance.PropertyChanged += (s, e) =>
-        {
-            if (e.PropertyName == "CurrentLanguage" || e.PropertyName == "Item")
-            {
-                OnPropertyChanged(nameof(CategoryTranslated));
-                OnPropertyChanged(nameof(TypeLabel));
-            }
-        };
+        OnPropertyChanged(nameof(CategoryTranslated));
+        OnPropertyChanged(nameof(TypeLabel));
     }
 
     private static string FormatSize(long bytes)
@@ -987,8 +990,90 @@ public partial class MainWindow : Window
         }
     }
 }
+--- NAZWA PLIKU: ./Helpers/BashHelpers.cs ---
+namespace VstDeleter.Helpers;
+
+public static class BashHelpers
+{
+    /// <summary>
+    /// Bezpiecznie eskejpuje ciąg znaków (np. ścieżkę), aby mógł zostać wstawiony
+    /// pomiędzy pojedyncze cudzysłowy w skrypcie Bash.
+    /// Zastępuje każdy apostrof (') sekwencją ('\'').
+    /// </summary>
+    public static string Escape(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return string.Empty;
+        return input.Replace("'", "'\\''");
+    }
+}
+
+--- NAZWA PLIKU: ./Helpers/ThrottledProgress.cs ---
+using System;
+
+using System.Threading;
+
+namespace VstDeleter.Helpers;
+
+public class ThrottledProgress<T> : IProgress<T>, IDisposable
+{
+    private readonly IProgress<T> _underlying;
+    private readonly TimeSpan _delay;
+    private DateTime _lastReport = DateTime.MinValue;
+    private T? _lastValue;
+    private bool _hasPending = false;
+    private readonly object _lock = new();
+    private Timer? _timer;
+
+    public ThrottledProgress(IProgress<T> underlying, TimeSpan delay)
+    {
+        _underlying = underlying;
+        _delay = delay;
+        _timer = new Timer(Flush, null, Timeout.Infinite, Timeout.Infinite);
+    }
+
+    public void Report(T value)
+    {
+        lock (_lock)
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastReport >= _delay)
+            {
+                _lastReport = now;
+                _hasPending = false;
+                _underlying.Report(value);
+                _timer?.Change(Timeout.Infinite, Timeout.Infinite);
+            }
+            else
+            {
+                _lastValue = value;
+                _hasPending = true;
+                _timer?.Change(_delay, Timeout.InfiniteTimeSpan);
+            }
+        }
+    }
+
+    private void Flush(object? state)
+    {
+        lock (_lock)
+        {
+            if (_hasPending)
+            {
+                _lastReport = DateTime.UtcNow;
+                _hasPending = false;
+                _underlying.Report(_lastValue!);
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+}
+
 --- NAZWA PLIKU: ./Services/PluginScanner.cs ---
 using VstDeleter.Models;
+using VstDeleter.Helpers;
 
 namespace VstDeleter.Services;
 
@@ -1242,11 +1327,19 @@ public static class PluginScanner
         try
         {
             var options = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true };
-            foreach (string f in Directory.EnumerateFiles(path, "*", options))
+            
+            var enumerable = new System.IO.Enumeration.FileSystemEnumerable<long>(
+                path,
+                (ref System.IO.Enumeration.FileSystemEntry entry) => entry.Length,
+                options)
+            {
+                ShouldIncludePredicate = (ref System.IO.Enumeration.FileSystemEntry entry) => !entry.IsDirectory
+            };
+
+            foreach (var size in enumerable)
             {
                 ct.ThrowIfCancellationRequested();
-                try { total += new FileInfo(f).Length; } 
-                catch (Exception ex) { AppLogger.Log($"[GetDirectorySize]: {ex.ToString()}"); }
+                total += size;
             }
         }
         catch (OperationCanceledException) { throw; }
@@ -1274,6 +1367,14 @@ public static class PluginScanner
                 try
                 {
                     progress?.Report(item.ShortPath);
+                    if (!IsPathSafeToDelete(item.Path))
+                    {
+                        AppLogger.Log($"[ZABEZPIECZENIE] Odmowa usunięcia krytycznej ścieżki (Native): '{item.Path}'");
+                        errorMessages.Add($"[Zabezpieczenie] Odmowa usunięcia krytycznej ścieżki: {item.Path}");
+                        errors++;
+                        continue;
+                    }
+
                     if (item.IsDirectory)
                         Directory.Delete(item.Path, recursive: true);
                     else
@@ -1314,7 +1415,7 @@ public static class PluginScanner
                                 string ext = fileName.EndsWith(".bom") ? ".bom" : ".plist";
                                 string pkgId = fileName.Substring(0, fileName.Length - ext.Length);
                                 
-                                bashLines.Add($"pkgutil --forget '{pkgId.Replace("'", "'\\''")}' || true");
+                                bashLines.Add($"pkgutil --forget '{BashHelpers.Escape(pkgId)}' || true");
                             }
                         }
                         else
@@ -1325,37 +1426,44 @@ public static class PluginScanner
 
                     foreach (var p in rmPaths)
                     {
-                        bashLines.Add($"rm -rf '{p.Replace("'", "'\\''")}'");
+                        string safePath = p.TrimEnd('/');
+                        if (string.IsNullOrWhiteSpace(safePath) || 
+                            safePath.Length < 12 || 
+                            safePath == "/Library" || 
+                            safePath == "/System" || 
+                            safePath == "/Users" || 
+                            safePath == "/Applications" || 
+                            safePath == "/private")
+                        {
+                            AppLogger.Log($"[ZABEZPIECZENIE] Odmowa wygenerowania komendy rm -rf dla ścieżki: '{p}' (zbyt krótka lub krytyczna dla systemu)");
+                            errorMessages.Add($"[Zabezpieczenie] Odmowa usunięcia krytycznej ścieżki: {p}");
+                            errors++;
+                            continue;
+                        }
+                        
+                        bashLines.Add($"rm -rf '{BashHelpers.Escape(p)}'");
                     }
 
                     string bashCommand = string.Join(" ; ", bashLines);
-                    string scriptPath = Path.GetTempFileName();
-                    
-                    try
-                    {
-                        await File.WriteAllTextAsync(scriptPath, bashCommand, ct);
-
                         var psi = new System.Diagnostics.ProcessStartInfo
                         {
                             FileName = "osascript",
                             UseShellExecute = false,
-                            RedirectStandardOutput = false,
+                            RedirectStandardInput = true,
+                            RedirectStandardOutput = true,
                             RedirectStandardError = true
                         };
-                        
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("on run argv");
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("do shell script \"/bin/sh '\" & item 1 of argv & \"'\" with administrator privileges");
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("end run");
-                        psi.ArgumentList.Add(scriptPath);
                         
                         using var proc = System.Diagnostics.Process.Start(psi);
                         if (proc != null)
                         {
+                            string safeBashCommand = bashCommand.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                            await proc.StandardInput.WriteAsync($"do shell script \"{safeBashCommand}\" with administrator privileges");
+                            proc.StandardInput.Close();
+
                             string err = await proc.StandardError.ReadToEndAsync();
-                            await proc.WaitForExitAsync();
+                            using var ctr = ct.Register(() => { try { proc.Kill(true); } catch { } });
+                            await proc.WaitForExitAsync(ct);
                             if (proc.ExitCode == 0)
                             {
                                 ok += sudoPaths.Count;
@@ -1371,11 +1479,6 @@ public static class PluginScanner
                             errors += sudoPaths.Count;
                             errorMessages.Add("Nie udało się uruchomić osascript.");
                         }
-                    }
-                    finally
-                    {
-                        if (File.Exists(scriptPath)) File.Delete(scriptPath);
-                    }
                 }
                 catch (System.ComponentModel.Win32Exception ex)
                 {
@@ -1399,6 +1502,30 @@ public static class PluginScanner
 
             return new DeleteResult(ok, errors, errorMessages);
         }, ct);
+    }
+
+    private static bool IsPathSafeToDelete(string p)
+    {
+        string safePath = p.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(safePath) || safePath.Length < 12) return false;
+
+        string[] criticalDirectories = {
+            "/Library", "/System", "/Users", "/Applications", "/private",
+            "/Library/Audio/Plug-Ins", "/Library/Audio/Plug-Ins/VST",
+            "/Library/Audio/Plug-Ins/VST3", "/Library/Audio/Plug-Ins/Components",
+            "/Library/Audio/Plug-Ins/CLAP", "/Library/Audio/Plug-Ins/HAL",
+            "/Library/Application Support/Avid/Audio/Plug-Ins",
+            "/Users/Shared"
+        };
+
+        foreach (var dir in criticalDirectories)
+        {
+            if (safePath.Equals(dir, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 }
 
@@ -1737,6 +1864,7 @@ public static class PluginDatabase
 --- NAZWA PLIKU: ./Services/BackupService.cs ---
 using System.Text.Json;
 using System.Text.Encodings.Web;
+using VstDeleter.Helpers;
 using VstDeleter.Models;
 
 namespace VstDeleter.Services;
@@ -1939,59 +2067,55 @@ public static class BackupService
                 {
                     progress?.Report("Wymagane uprawnienia administratora do przywrócenia...");
                     
-                    var bashLines = new List<string>();
+                    var taskCommands = new List<string>();
                     string currentUser = Environment.UserName;
                     
                     foreach (var task in sudoCopyTasks)
                     {
-                        string safeSource = $"'{task.source.Replace("'", "'\\''")}'";
+                        var singleTaskLines = new List<string>();
+                        string safeSource = $"'{BashHelpers.Escape(task.source)}'";
                         
                         string destDir = Path.GetDirectoryName(task.dest) ?? "";
-                        string safeDestDir = $"'{destDir.Replace("'", "'\\''")}'";
+                        string safeDestDir = $"'{BashHelpers.Escape(destDir)}'";
                         
-                        string safeDest = $"'{task.dest.Replace("'", "'\\''")}'";
+                        string safeDest = $"'{BashHelpers.Escape(task.dest)}'";
 
-                        bashLines.Add($"mkdir -p {safeDestDir}");
-                        bashLines.Add($"ditto {safeSource} {safeDest}");
+                        singleTaskLines.Add($"mkdir -p {safeDestDir}");
+                        singleTaskLines.Add($"ditto {safeSource} {safeDest}");
                         
                         if (task.dest.StartsWith("/Library/") || task.dest.StartsWith("/Applications/"))
                         {
-                            bashLines.Add($"chown -R root:wheel {safeDest}");
+                            singleTaskLines.Add($"chown -R root:wheel {safeDest}");
                         }
                         else
                         {
-                            bashLines.Add($"chown -R {currentUser}:staff {safeDest}");
+                            singleTaskLines.Add($"chown -R '{BashHelpers.Escape(currentUser)}':staff {safeDest}");
                         }
+                        
+                        taskCommands.Add("(" + string.Join(" && ", singleTaskLines) + ")");
                     }
                     
-                    string bashCommand = string.Join(" ; ", bashLines);
-                    string scriptPath = Path.GetTempFileName();
+                    string bashCommand = string.Join(" ; ", taskCommands);
                     
-                    try
-                    {
-                        await File.WriteAllTextAsync(scriptPath, bashCommand, ct);
-
                         var psi = new System.Diagnostics.ProcessStartInfo
                         {
                             FileName = "osascript",
                             UseShellExecute = false,
-                            RedirectStandardOutput = false,
+                            RedirectStandardInput = true,
+                            RedirectStandardOutput = true,
                             RedirectStandardError = true
                         };
-                        
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("on run argv");
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("do shell script \"/bin/sh '\" & item 1 of argv & \"'\" with administrator privileges");
-                        psi.ArgumentList.Add("-e");
-                        psi.ArgumentList.Add("end run");
-                        psi.ArgumentList.Add(scriptPath);
                         
                         using var proc = System.Diagnostics.Process.Start(psi);
                         if (proc != null)
                         {
+                            string safeBashCommand = bashCommand.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                            await proc.StandardInput.WriteAsync($"do shell script \"{safeBashCommand}\" with administrator privileges");
+                            proc.StandardInput.Close();
+
                             string err = await proc.StandardError.ReadToEndAsync();
-                            await proc.WaitForExitAsync();
+                            using var ctr = ct.Register(() => { try { proc.Kill(true); } catch { } });
+                            await proc.WaitForExitAsync(ct);
                             
                             if (proc.ExitCode == 0)
                             {
@@ -2008,11 +2132,6 @@ public static class BackupService
                             errors += sudoCopyTasks.Count;
                             errorMessages.Add("Nie udało się uruchomić osascript (sudo).");
                         }
-                    }
-                    finally
-                    {
-                        if (File.Exists(scriptPath)) File.Delete(scriptPath);
-                    }
                 }
                 catch (System.ComponentModel.Win32Exception ex)
                 {
@@ -2048,6 +2167,23 @@ public static class BackupService
         if (!string.IsNullOrEmpty(destDir))
         {
             Directory.CreateDirectory(destDir);
+        }
+
+        if (File.Exists(source))
+        {
+            try
+            {
+                await Task.Run(() => File.Copy(source, dest, true), ct);
+                return;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw; // Let it bubble up so sudo logic can take over
+            }
+            catch (Exception)
+            {
+                // If native copy fails for other reasons, fallback to ditto just in case
+            }
         }
 
         var psi = new System.Diagnostics.ProcessStartInfo
