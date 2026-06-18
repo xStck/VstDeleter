@@ -20,7 +20,21 @@ To distribute or use VST Deleter as a native macOS application, you need to comp
 - macOS operating system
 - [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) installed.
 
-### Build Instructions
+### Automated Build (Recommended)
+You can build the app instantly using the included bash script:
+
+1. Open a terminal and navigate to the project directory:
+   ```bash
+   cd /path/to/VstDeleter
+   ```
+2. Run the build script:
+   ```bash
+   ./build_mac.sh
+   ```
+The script will automatically compile the project for Apple Silicon, generate the required `Info.plist`, set executable permissions, and output a ready-to-use `VstDeleter.app` inside the `dist/` directory.
+
+### Manual Build Instructions
+If you prefer to build the app manually:
 
 1. Open a terminal and navigate to the root directory of this repository:
    ```bash
@@ -40,7 +54,7 @@ To distribute or use VST Deleter as a native macOS application, you need to comp
 
 3. Publish the .NET application as a self-contained executable for Apple Silicon (`osx-arm64`):
    ```bash
-   dotnet publish -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true -o "$MAC_OS_DIR"
+   dotnet publish -c Release -r osx-arm64 --self-contained true -o "$MAC_OS_DIR"
    ```
    *(If you are building for older Intel Macs, change `-r osx-arm64` to `-r osx-x64`)*
 
@@ -74,6 +88,8 @@ To distribute or use VST Deleter as a native macOS application, you need to comp
        <string>Icon.icns</string>
        <key>LSMinimumSystemVersion</key>
        <string>11.0</string>
+       <key>NSPrincipalClass</key>
+       <string>NSApplication</string>
        <key>NSHighResolutionCapable</key>
        <true/>
    </dict>
