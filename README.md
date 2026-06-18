@@ -103,7 +103,4 @@ If you prefer to build the app manually:
 
 7. **Done!** You now have a working `VstDeleter.app` bundle in your directory. You can double-click it to run, or move it to your `/Applications` folder.
 
----
-<div align="center">
-  <i>"Code less, vibe more. Secure by design."</i>
-</div>
+
