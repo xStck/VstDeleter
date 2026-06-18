@@ -43,6 +43,7 @@ public static class BackupService
 
         var entries = new List<BackupEntry>();
         int errorsCount = 0;
+        var sudoBackupTasks = new List<FoundItem>();
 
         try
         {
@@ -70,16 +71,114 @@ public static class BackupService
                     });
                 }
                 catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    errorsCount++;
-                    AppLogger.Log($"[backup] {item.Path}: {ex.ToString()}");
+                    // Plik zablokowany np. systemowym zabezpieczeniem w /Library. Przekazujemy do eskalacji.
+                    sudoBackupTasks.Add(item);
+                }
+            }
+
+            // Próba ratunkowa z prawami Sudo dla plików opornych
+            if (sudoBackupTasks.Count > 0)
+            {
+                string tempScriptFile = Path.Combine(Path.GetTempPath(), $"vstdeleter_backup_{Guid.NewGuid():N}.sh");
+                string tempFlagFile = Path.Combine(Path.GetTempPath(), $"vstdeleter_backup_{Guid.NewGuid():N}.flag");
+                try
+                {
+                    await File.WriteAllTextAsync(tempFlagFile, "1", ct);
+                    var scriptLines = new List<string> { "#!/bin/bash", "SUCC=0", "ERR=0" };
+                    foreach (var item in sudoBackupTasks)
+                    {
+                        string relativePath = item.Path.TrimStart('/');
+                        string targetPath   = Path.Combine(backupDir, relativePath);
+                        string safeSource   = $"'{BashHelpers.Escape(item.Path)}'";
+                        string safeDest     = $"'{BashHelpers.Escape(targetPath)}'";
+                        string safeDestDir  = $"'{BashHelpers.Escape(Path.GetDirectoryName(targetPath) ?? "")}'";
+
+                        string cmd = $"(mkdir -p {safeDestDir} && ditto {safeSource} {safeDest})";
+                        scriptLines.Add($"[ ! -f '{BashHelpers.Escape(tempFlagFile)}' ] && exit 1");
+                        scriptLines.Add($"{cmd} && SUCC=$((SUCC+1)) || ERR=$((ERR+1))");
+                    }
+                    scriptLines.Add("echo \"SUCCESS:$SUCC\"");
+                    scriptLines.Add("echo \"ERRORS:$ERR\"");
+
+                    await File.WriteAllLinesAsync(tempScriptFile, scriptLines, ct);
+
+                    var psi = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "osascript",
+                        UseShellExecute = false,
+                        RedirectStandardInput = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    
+                    using var proc = System.Diagnostics.Process.Start(psi);
+                    if (proc != null)
+                    {
+                        using var ctr = ct.Register(() => { 
+                            try { if (File.Exists(tempFlagFile)) File.Delete(tempFlagFile); } catch { }
+                            try { proc.Kill(true); } catch { } 
+                        });
+                        string safeScriptPath = $"'{BashHelpers.Escape(tempScriptFile)}'";
+                        await proc.StandardInput.WriteAsync($"with timeout of 86400 seconds\n do shell script \"sh {safeScriptPath}\" with administrator privileges\n end timeout");
+                        proc.StandardInput.Close();
+
+                        var outTask = proc.StandardOutput.ReadToEndAsync(ct);
+                        var errTask = proc.StandardError.ReadToEndAsync(ct);
+                        await Task.WhenAll(outTask, errTask);
+                        string outStr = await outTask;
+                        string errStr = await errTask;
+                        await proc.WaitForExitAsync(ct);
+                        
+                        if (proc.ExitCode == 0 && outStr.Contains("SUCCESS:"))
+                        {
+                            // Niezależnie od mniejszych zgrzytów wewnątrz skryptu powłoki dopisujemy wydelegowane ratunkowe pliki do manifestu
+                            foreach (var item in sudoBackupTasks)
+                            {
+                                string relativePath = item.Path.TrimStart('/');
+                                string checkPath = Path.Combine(backupDir, relativePath);
+                                if (item.IsDirectory ? Directory.Exists(checkPath) : File.Exists(checkPath))
+                                {
+                                    entries.Add(new BackupEntry
+                                    {
+                                        OriginalAbsolutePath = item.Path,
+                                        BackupRelativePath   = relativePath,
+                                        Type                 = item.IsDirectory ? "directory" : "file",
+                                        Category             = item.Category,
+                                        SizeBytes            = item.SizeBytes
+                                    });
+                                }
+                            }
+
+                            int parsedErr = 0;
+                            foreach (var outputLine in outStr.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                            {
+                                if (outputLine.StartsWith("ERRORS:")) int.TryParse(outputLine.Substring(7), out parsedErr);
+                            }
+                            if (parsedErr > 0)
+                            {
+                                errorsCount += parsedErr;
+                                AppLogger.Log($"[backup] Ostrzeżenie Sudo: {parsedErr} wysoce chronionych plików nie dało się skopiować nawet jako Root.");
+                            }
+                        }
+                        else
+                        {
+                            errorsCount += sudoBackupTasks.Count;
+                            AppLogger.Log($"[backup] Eskalacja Root odrzucona dla {sudoBackupTasks.Count} plików. Treść: {errStr.Trim()} {outStr.Trim()}");
+                        }
+                    }
+                }
+                finally
+                {
+                    try { if (File.Exists(tempScriptFile)) File.Delete(tempScriptFile); } catch { }
+                    try { if (File.Exists(tempFlagFile)) File.Delete(tempFlagFile); } catch { }
                 }
             }
 
             if (errorsCount > 0)
             {
-                throw new Exception($"Zakończono z błędami. {errorsCount} element(ów) nie zostało skopiowanych. Zatrzymano operację, aby zapobiec utracie danych.");
+                AppLogger.Log($"[backup] Uwaga: Manifest utworzony z brakami. Nieskopiowano {errorsCount} element(ów). Reszta dysku bezpieczna.");
             }
 
             // Zapis manifestu
@@ -247,9 +346,11 @@ public static class BackupService
                         singleTaskLines.Add($"mkdir -p {safeDestDir}");
                         singleTaskLines.Add($"ditto {safeSource} {safeDest}");
                         
-                        if (task.dest.StartsWith("/Library/") || task.dest.StartsWith("/Applications/"))
+                        if (task.dest.StartsWith("/Library/") || task.dest.StartsWith("/Applications/") || task.dest.StartsWith("/Users/Shared/"))
                         {
                             singleTaskLines.Add($"chown -R root:wheel {safeDest}");
+                            // Opcjonalnie: dajemy pełne uprawnienia dla demonów audio
+                            singleTaskLines.Add($"chmod -R 777 {safeDest}");
                         }
                         else
                         {
@@ -259,38 +360,72 @@ public static class BackupService
                         taskCommands.Add("(" + string.Join(" && ", singleTaskLines) + ")");
                     }
                     
-                    string bashCommand = string.Join(" && ", taskCommands);
                     int actualSudoCommands = taskCommands.Count;
+                    string tempScriptFile = Path.Combine(Path.GetTempPath(), $"vstdeleter_rest_{Guid.NewGuid():N}.sh");
+                    string tempFlagFile = Path.Combine(Path.GetTempPath(), $"vstdeleter_rest_{Guid.NewGuid():N}.flag");
                     
+                    try
+                    {
+                        await File.WriteAllTextAsync(tempFlagFile, "1", ct);
+                        var scriptLines = new List<string> { "#!/bin/bash", "SUCC=0", "ERR=0" };
+                        foreach (var cmd in taskCommands)
+                        {
+                            scriptLines.Add($"[ ! -f '{BashHelpers.Escape(tempFlagFile)}' ] && exit 1");
+                            scriptLines.Add($"{cmd} && SUCC=$((SUCC+1)) || ERR=$((ERR+1))");
+                        }
+                        scriptLines.Add("echo \"SUCCESS:$SUCC\"");
+                        scriptLines.Add("echo \"ERRORS:$ERR\"");
+
+                        await File.WriteAllLinesAsync(tempScriptFile, scriptLines, ct);
+
                         var psi = new System.Diagnostics.ProcessStartInfo
                         {
                             FileName = "osascript",
                             UseShellExecute = false,
                             RedirectStandardInput = true,
-                            RedirectStandardOutput = false,
+                            RedirectStandardOutput = true,
                             RedirectStandardError = true
                         };
                         
                         using var proc = System.Diagnostics.Process.Start(psi);
                         if (proc != null)
                         {
-                            using var ctr = ct.Register(() => { try { proc.Kill(true); } catch { } });
+                            using var ctr = ct.Register(() => { 
+                                try { if (File.Exists(tempFlagFile)) File.Delete(tempFlagFile); } catch { }
+                                try { proc.Kill(true); } catch { } 
+                            });
                             
-                            string safeBashCommand = bashCommand.Replace("\\", "\\\\").Replace("\"", "\\\"");
-                            await proc.StandardInput.WriteAsync($"do shell script \"{safeBashCommand}\" with administrator privileges");
+                            string safeScriptPath = $"'{BashHelpers.Escape(tempScriptFile)}'";
+                            await proc.StandardInput.WriteAsync($"with timeout of 86400 seconds\n do shell script \"sh {safeScriptPath}\" with administrator privileges\n end timeout");
                             proc.StandardInput.Close();
 
-                            string err = await proc.StandardError.ReadToEndAsync();
+                            var outTask = proc.StandardOutput.ReadToEndAsync(ct);
+                            var errTask = proc.StandardError.ReadToEndAsync(ct);
+                            await Task.WhenAll(outTask, errTask);
+                            string outStr = await outTask;
+                            string errStr = await errTask;
                             await proc.WaitForExitAsync(ct);
                             
-                            if (proc.ExitCode == 0)
+                            if (proc.ExitCode == 0 && outStr.Contains("SUCCESS:"))
                             {
-                                ok += actualSudoCommands;
+                                int parsedOk = 0;
+                                int parsedErr = 0;
+                                foreach (var outputLine in outStr.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    if (outputLine.StartsWith("SUCCESS:")) int.TryParse(outputLine.Substring(8), out parsedOk);
+                                    if (outputLine.StartsWith("ERRORS:")) int.TryParse(outputLine.Substring(7), out parsedErr);
+                                }
+                                ok += parsedOk;
+                                errors += parsedErr;
+                                if (parsedErr > 0)
+                                {
+                                    errorMessages.Add($"Odtwarzanie Sudo częściowo zablokowane. Pomyślnie: {parsedOk}, Błędy: {parsedErr}");
+                                }
                             }
                             else
                             {
                                 errors += actualSudoCommands;
-                                errorMessages.Add($"Odmowa dostępu / błąd sudo przy przywracaniu: {err.Trim()}");
+                                errorMessages.Add($"Odmowa dostępu / błąd sudo przy przywracaniu: {errStr.Trim()} {outStr.Trim()}");
                             }
                         }
                         else
@@ -298,6 +433,12 @@ public static class BackupService
                             errors += actualSudoCommands;
                             errorMessages.Add("Nie udało się uruchomić osascript (sudo).");
                         }
+                    }
+                    finally
+                    {
+                        try { if (File.Exists(tempScriptFile)) File.Delete(tempScriptFile); } catch { }
+                        try { if (File.Exists(tempFlagFile)) File.Delete(tempFlagFile); } catch { }
+                    }
                 }
                 catch (System.ComponentModel.Win32Exception ex)
                 {

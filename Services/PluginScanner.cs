@@ -169,7 +169,6 @@ public static class PluginScanner
         string norm = pluginName.Replace(" ", "");
         if (norm.Length >= 4)
         {
-            string searchTerm = norm.ToLower();
             string[] scanDirs = {
                 "/var/db/receipts",
                 $"{home}/Library/Preferences",
@@ -206,7 +205,44 @@ public static class PluginScanner
                             continue;
                         }
 
-                        if (fileName.Contains(searchTerm))
+                        bool isMatch = false;
+                        bool isConfigPath = dir.Contains("Preferences", StringComparison.OrdinalIgnoreCase) || dir.Contains("receipts", StringComparison.OrdinalIgnoreCase);
+
+                        foreach (var variant in variants)
+                        {
+                            string lowerVariant = variant.ToLowerInvariant();
+
+                            if (isConfigPath)
+                            {
+                                // Pliki preferencji w macOS (np. com.nativeinstruments.massive.plist) często mają odwróconą domenę na początku.
+                                // Użycie StartsWith("massive") ucinałoby te ważne pliki konfiguracyjne.
+                                // Dla katalogów konfiguracji dopuszczamy luźniejsze dopasowanie (rzadko leżą tu gigabajty cudzych danych).
+                                if (fileName.Contains(lowerVariant))
+                                {
+                                    isMatch = true;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                // Ochrona "Shotgun" dla folderów z ciężkimi assetami (Application Support, Presets).
+                                // Zostawiamy restrykcyjne StartsWith. 
+                                // ALE jeśli wpisana fraza jest unikalna i dłuższa niż 6 znaków (np. "Omnisphere"), 
+                                // ryzyko fałszywych dopasowań drastycznie maleje i możemy bezpiecznie użyć Contains.
+                                if (fileName.StartsWith(lowerVariant) || fileName.StartsWith($"com.{lowerVariant}") || fileName.StartsWith($"org.{lowerVariant}"))
+                                {
+                                    isMatch = true;
+                                    break;
+                                }
+                                else if (lowerVariant.Length >= 6 && fileName.Contains(lowerVariant))
+                                {
+                                    isMatch = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (isMatch)
                         {
                             string category = "Plik konfiguracyjny / Log";
                             if (dir.Contains("Presets", StringComparison.OrdinalIgnoreCase))
@@ -353,10 +389,8 @@ public static class PluginScanner
                                 bashLines.Add($"pkgutil --forget '{BashHelpers.Escape(pkgId)}' || true");
                             }
                         }
-                        else
-                        {
-                            rmPaths.Add(path);
-                        }
+                        
+                        rmPaths.Add(path);
                     }
 
                     foreach (var p in rmPaths)
@@ -379,41 +413,83 @@ public static class PluginScanner
                     else
                     {
                         int actualSudoCommands = bashLines.Count;
-                        string bashCommand = string.Join(" && ", bashLines);
-                        var psi = new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = "osascript",
-                            UseShellExecute = false,
-                            RedirectStandardInput = true,
-                            RedirectStandardOutput = false,
-                            RedirectStandardError = true
-                        };
                         
-                        using var proc = System.Diagnostics.Process.Start(psi);
-                        if (proc != null)
+                        string tempScriptFile = Path.Combine(Path.GetTempPath(), $"vstdeleter_del_{Guid.NewGuid():N}.sh");
+                        string tempFlagFile = Path.Combine(Path.GetTempPath(), $"vstdeleter_del_{Guid.NewGuid():N}.flag");
+                        try
                         {
-                            using var ctr = ct.Register(() => { try { proc.Kill(true); } catch { } });
-                            
-                            string safeBashCommand = bashCommand.Replace("\\", "\\\\").Replace("\"", "\\\"");
-                            await proc.StandardInput.WriteAsync($"do shell script \"{safeBashCommand}\" with administrator privileges");
-                            proc.StandardInput.Close();
-
-                            string err = await proc.StandardError.ReadToEndAsync();
-                            await proc.WaitForExitAsync(ct);
-                            if (proc.ExitCode == 0)
+                            await File.WriteAllTextAsync(tempFlagFile, "1", ct);
+                            var scriptLines = new List<string> { "#!/bin/bash", "SUCC=0", "ERR=0" };
+                            foreach (var line in bashLines)
                             {
-                                ok += actualSudoCommands;
+                                scriptLines.Add($"[ ! -f '{BashHelpers.Escape(tempFlagFile)}' ] && exit 1");
+                                scriptLines.Add($"{line} && SUCC=$((SUCC+1)) || ERR=$((ERR+1))");
+                            }
+                            scriptLines.Add("echo \"SUCCESS:$SUCC\"");
+                            scriptLines.Add("echo \"ERRORS:$ERR\"");
+
+                            await File.WriteAllLinesAsync(tempScriptFile, scriptLines, ct);
+
+                            var psi = new System.Diagnostics.ProcessStartInfo
+                            {
+                                FileName = "osascript",
+                                UseShellExecute = false,
+                                RedirectStandardInput = true,
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true
+                            };
+                            
+                            using var proc = System.Diagnostics.Process.Start(psi);
+                            if (proc != null)
+                            {
+                                using var ctr = ct.Register(() => { 
+                                    try { if (File.Exists(tempFlagFile)) File.Delete(tempFlagFile); } catch { }
+                                    try { proc.Kill(true); } catch { } 
+                                });
+                                
+                                string safeScriptPath = $"'{BashHelpers.Escape(tempScriptFile)}'";
+                                await proc.StandardInput.WriteAsync($"with timeout of 86400 seconds\n do shell script \"sh {safeScriptPath}\" with administrator privileges\n end timeout");
+                                proc.StandardInput.Close();
+
+                                var outTask = proc.StandardOutput.ReadToEndAsync(ct);
+                                var errTask = proc.StandardError.ReadToEndAsync(ct);
+                                await Task.WhenAll(outTask, errTask);
+                                string outStr = await outTask;
+                                string errStr = await errTask;
+                                await proc.WaitForExitAsync(ct);
+
+                                if (proc.ExitCode == 0 && outStr.Contains("SUCCESS:"))
+                                {
+                                    int parsedOk = 0;
+                                    int parsedErr = 0;
+                                    foreach (var outputLine in outStr.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                                    {
+                                        if (outputLine.StartsWith("SUCCESS:")) int.TryParse(outputLine.Substring(8), out parsedOk);
+                                        if (outputLine.StartsWith("ERRORS:")) int.TryParse(outputLine.Substring(7), out parsedErr);
+                                    }
+                                    ok += parsedOk;
+                                    errors += parsedErr;
+                                    if (parsedErr > 0)
+                                    {
+                                        errorMessages.Add($"Sudo częściowo zablokowane. Pomyślnie: {parsedOk}, Błędy: {parsedErr}");
+                                    }
+                                }
+                                else
+                                {
+                                    errors += actualSudoCommands;
+                                    errorMessages.Add($"Odmowa dostępu / błąd sudo: {errStr.Trim()} {outStr.Trim()}");
+                                }
                             }
                             else
                             {
                                 errors += actualSudoCommands;
-                                errorMessages.Add($"Odmowa dostępu / błąd sudo: {err.Trim()}");
+                                errorMessages.Add("Nie udało się uruchomić osascript.");
                             }
                         }
-                        else
+                        finally
                         {
-                            errors += actualSudoCommands;
-                            errorMessages.Add("Nie udało się uruchomić osascript.");
+                            try { if (File.Exists(tempScriptFile)) File.Delete(tempScriptFile); } catch { }
+                            try { if (File.Exists(tempFlagFile)) File.Delete(tempFlagFile); } catch { }
                         }
                     }
                 }
