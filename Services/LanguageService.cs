@@ -119,7 +119,7 @@ public class LanguageService : INotifyPropertyChanged
         { "Manifest_SelectDialog", "Wybierz plik manifestu kopii (VSTDeleter_manifest.json)" },
         { "Manifest_Invalid", "⚠ Nie można wczytać pliku — sprawdź czy to poprawny manifest VST Deleter." },
         { "Restore_HeaderInfo", "Wtyczka: {0}  ·  Kopia z: {1:dd.MM.yyyy HH:mm}  ·  {2} elementów" },
-        { "Restore_SuccessSkipped", "✓ Przywrócono {0} plików. (Pominięto {1} chronionych przez SIP)" },
+        { "Restore_SuccessSkipped", "✓ Przywrócono {0} plików. (Pominięto {1} paragonów SIP, nie wpływa na wtyczki)" },
         { "Restore_Success", "✓ Przywrócono {0} element(ów) pomyślnie." },
         { "Restore_Partial", "Przywrócono {0}, błędów: {1}, pominięto: {2}." },
 
@@ -254,7 +254,7 @@ public class LanguageService : INotifyPropertyChanged
         { "Manifest_SelectDialog", "Select backup manifest file (VSTDeleter_manifest.json)" },
         { "Manifest_Invalid", "⚠ Cannot load file — make sure it is a valid VST Deleter manifest." },
         { "Restore_HeaderInfo", "Plugin: {0}  ·  Backup from: {1:dd.MM.yyyy HH:mm}  ·  {2} items" },
-        { "Restore_SuccessSkipped", "✓ Restored {0} files. (Skipped {1} protected by SIP)" },
+        { "Restore_SuccessSkipped", "✓ Restored {0} files. (Skipped {1} SIP receipts, plugins will still work)" },
         { "Restore_Success", "✓ Successfully restored {0} item(s)." },
         { "Restore_Partial", "Restored {0}, errors: {1}, skipped: {2}." },
 

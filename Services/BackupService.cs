@@ -310,6 +310,8 @@ public static class BackupService
                     await DittoCopyAsync(sourcePath, destPath, ct);
 
                     try { System.Diagnostics.Process.Start("xattr", $"-r -d com.apple.quarantine \"{destPath}\"")?.WaitForExit(); } catch { }
+                    try { System.Diagnostics.Process.Start("find", $"\"{destPath}\" -exec touch {{}} +")?.WaitForExit(); } catch { }
+                    try { System.Diagnostics.Process.Start("touch", $"\"{destPath}\"")?.WaitForExit(); } catch { }
 
                     ok++;
                 }
@@ -346,14 +348,17 @@ public static class BackupService
                         string safeDest = $"'{BashHelpers.Escape(task.dest)}'";
 
                         singleTaskLines.Add($"mkdir -p {safeDestDir}");
+                        singleTaskLines.Add($"rm -rf {safeDest}"); // Usunięcie ewentualnego błędnego katalogu po nieudanym Non-Sudo
                         singleTaskLines.Add($"ditto {safeSource} {safeDest}");
-                        singleTaskLines.Add($"xattr -r -d com.apple.quarantine {safeDest} 2>/dev/null || true");
+                        singleTaskLines.Add($"( xattr -r -d com.apple.quarantine {safeDest} 2>/dev/null || true )");
+                        singleTaskLines.Add($"( find {safeDest} -exec touch {{}} + 2>/dev/null || true )");
+                        singleTaskLines.Add($"( touch {safeDest} 2>/dev/null || true )");
                         
                         if (task.dest.StartsWith("/Library/") || task.dest.StartsWith("/Applications/") || task.dest.StartsWith("/Users/Shared/"))
                         {
                             singleTaskLines.Add($"chown -R root:wheel {safeDest}");
-                            // Opcjonalnie: dajemy pełne uprawnienia dla demonów audio
-                            singleTaskLines.Add($"chmod -R 777 {safeDest}");
+                            // Zabezpieczenie Hardened Runtime macOS (755 zamiast 777)
+                            singleTaskLines.Add($"chmod -R 755 {safeDest}");
                         }
                         else
                         {
@@ -461,6 +466,28 @@ public static class BackupService
                     errorMessages.Add($"Nieoczekiwany błąd Sudo (przywracanie): {ex.Message}");
                     AppLogger.Log($"[restore sudo] unexpected: {ex.ToString()}");
                 }
+            }
+
+            if (ok > 0)
+            {
+                try
+                {
+                    string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    string cache1 = Path.Combine(home, "Library/Caches/AudioUnitCache/com.apple.audiounits.cache");
+                    string cache2 = Path.Combine(home, "Library/Caches/AudioUnitCache/com.apple.audiounits.sandboxed.cache");
+                    if (File.Exists(cache1)) File.Delete(cache1);
+                    if (File.Exists(cache2)) File.Delete(cache2);
+                    
+                    using (var p = new System.Diagnostics.Process())
+                    {
+                        p.StartInfo.FileName = "killall";
+                        p.StartInfo.Arguments = "-9 AudioComponentRegistrar";
+                        p.StartInfo.UseShellExecute = false;
+                        p.StartInfo.CreateNoWindow = true;
+                        p.Start();
+                    }
+                }
+                catch { }
             }
 
             return new RestoreResult(ok, errors, skipped, errorMessages);

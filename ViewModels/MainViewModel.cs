@@ -654,7 +654,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             {
                 if (result.Skipped > 0)
                 {
-                    RestoreStatus = $"✓ Przywrócono {result.Restored} plików. (Pominięto {result.Skipped} chronionych przez SIP)";
+                    RestoreStatus = $"✓ Przywrócono {result.Restored} plików. (Pominięto {result.Skipped} paragonów SIP, nie wpływa na wtyczki)";
                 }
                 else
                 {
