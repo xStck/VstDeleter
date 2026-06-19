@@ -20,6 +20,10 @@ echo "📦 Przenoszenie plików do struktury .app..."
 cp -R "./temp_build/"* "$MAC_OS_DIR/"
 rm -rf "./temp_build"
 
+if [ -f "Assets/icon.icns" ]; then
+    cp "Assets/icon.icns" "$RESOURCES_DIR/Icon.icns"
+fi
+
 echo "🔑 Ustawianie uprawnień wykonywania..."
 chmod +x "$MAC_OS_DIR/$APP_NAME"
 

@@ -12,6 +12,7 @@
         Background="#0F0F14"
         ExtendClientAreaToDecorationsHint="True"
         ExtendClientAreaTitleBarHeightHint="-1"
+        Icon="avares://VstDeleter/Assets/icon.png"
         TransparencyLevelHint="AcrylicBlur">
 
   <Window.Styles>
