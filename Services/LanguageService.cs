@@ -8,7 +8,7 @@ public class LanguageService : INotifyPropertyChanged
 {
     public static LanguageService Instance { get; } = new();
 
-    private string _currentLanguage = "pl";
+    private string _currentLanguage = "en";
     public string CurrentLanguage
     {
         get => _currentLanguage;

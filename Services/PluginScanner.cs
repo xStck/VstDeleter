@@ -163,6 +163,16 @@ public static class PluginScanner
             // Aplikacje
             Add(result, $"/Applications/{v}.app",                             "Aplikacja");
             Add(result, $"{home}/Applications/{v}.app",                       "Aplikacja");
+
+            // --- Dodatki dla DAW (szukamy na sztywno nazwy by nie skasować muzyki) ---
+            Add(result, $"{home}/Music/Ableton/User Library/{v}.vstpreset",    "Ableton Preset (VST3)");
+            Add(result, $"{home}/Music/Ableton/User Library/{v}.aupreset",     "Ableton Preset (AU)");
+            Add(result, $"{home}/Music/Ableton/User Library/{v}.adv",          "Ableton Device Preset");
+            Add(result, $"{home}/Music/Ableton/User Library/{v}.adg",          "Ableton Rack Preset");
+            Add(result, $"{home}/Music/Ableton/User Library/Presets/Audio Effects/{v}", "Ableton Effects");
+            Add(result, $"{home}/Music/Ableton/User Library/Presets/Instruments/{v}",   "Ableton Instruments");
+
+
         }
 
         // --- 4. Skanowanie "dynamiczne" głębokie (MaxDepth = 2) ---
@@ -352,7 +362,10 @@ public static class PluginScanner
                         File.Delete(item.Path);
                     ok++;
                 }
-                catch (UnauthorizedAccessException)
+                catch (Exception ex) when (ex is UnauthorizedAccessException || 
+                                           ex is IOException || 
+                                           ex.Message.Contains("denied", StringComparison.OrdinalIgnoreCase) ||
+                                           ex.Message.Contains("Odmowa", StringComparison.OrdinalIgnoreCase))
                 {
                     sudoPaths.Add(item.Path);
                 }
@@ -511,6 +524,28 @@ public static class PluginScanner
                     errorMessages.Add($"Nieoczekiwany błąd podczas próby sudo: {ex.Message}");
                     AppLogger.Log($"[delete sudo] unexpected: {ex.ToString()}");
                 }
+            }
+
+            if (ok > 0)
+            {
+                try
+                {
+                    string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    string cache1 = Path.Combine(home, "Library/Caches/AudioUnitCache/com.apple.audiounits.cache");
+                    string cache2 = Path.Combine(home, "Library/Caches/AudioUnitCache/com.apple.audiounits.sandboxed.cache");
+                    if (File.Exists(cache1)) File.Delete(cache1);
+                    if (File.Exists(cache2)) File.Delete(cache2);
+                    
+                    using (var p = new System.Diagnostics.Process())
+                    {
+                        p.StartInfo.FileName = "killall";
+                        p.StartInfo.Arguments = "-9 AudioComponentRegistrar";
+                        p.StartInfo.UseShellExecute = false;
+                        p.StartInfo.CreateNoWindow = true;
+                        p.Start();
+                    }
+                }
+                catch { }
             }
 
             return new DeleteResult(ok, errors, errorMessages);

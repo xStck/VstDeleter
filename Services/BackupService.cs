@@ -309,6 +309,8 @@ public static class BackupService
 
                     await DittoCopyAsync(sourcePath, destPath, ct);
 
+                    try { System.Diagnostics.Process.Start("xattr", $"-r -d com.apple.quarantine \"{destPath}\"")?.WaitForExit(); } catch { }
+
                     ok++;
                 }
                 catch (UnauthorizedAccessException)
@@ -345,6 +347,7 @@ public static class BackupService
 
                         singleTaskLines.Add($"mkdir -p {safeDestDir}");
                         singleTaskLines.Add($"ditto {safeSource} {safeDest}");
+                        singleTaskLines.Add($"xattr -r -d com.apple.quarantine {safeDest} 2>/dev/null || true");
                         
                         if (task.dest.StartsWith("/Library/") || task.dest.StartsWith("/Applications/") || task.dest.StartsWith("/Users/Shared/"))
                         {

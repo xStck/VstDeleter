@@ -3,6 +3,9 @@
 # Zatrzymanie skryptu w przypadku błędu
 set -e
 
+# Przejście do katalogu, w którym znajduje się skrypt
+cd "$(dirname "$0")"
+
 APP_NAME="VstDeleter"
 APP_BUNDLE="dist/$APP_NAME.app"
 MAC_OS_DIR="$APP_BUNDLE/Contents/MacOS"
