@@ -61,6 +61,25 @@ public static class BackupService
 
                     await DittoCopyAsync(item.Path, targetPath, ct);
 
+                    if (item.IsDirectory)
+                    {
+                        try 
+                        {
+                            bool backupHasFiles = Directory.EnumerateFileSystemEntries(targetPath).Any();
+                            if (!backupHasFiles)
+                            {
+                                bool originalHasFiles = true;
+                                try { originalHasFiles = Directory.EnumerateFileSystemEntries(item.Path).Any(); } catch { }
+                                if (originalHasFiles) 
+                                {
+                                    throw new UnauthorizedAccessException("TCC drop: copied directory is empty");
+                                }
+                            }
+                        }
+                        catch (UnauthorizedAccessException) { throw; }
+                        catch { throw new UnauthorizedAccessException("Cannot read destination folder"); }
+                    }
+
                     entries.Add(new BackupEntry
                     {
                         OriginalAbsolutePath = item.Path,
@@ -95,7 +114,7 @@ public static class BackupService
                         string safeDest     = $"'{BashHelpers.Escape(targetPath)}'";
                         string safeDestDir  = $"'{BashHelpers.Escape(Path.GetDirectoryName(targetPath) ?? "")}'";
 
-                        string cmd = $"(mkdir -p {safeDestDir} && ditto {safeSource} {safeDest})";
+                        string cmd = $"(mkdir -p {safeDestDir} && rm -rf {safeDest} && ditto {safeSource} {safeDest})";
                         scriptLines.Add($"[ ! -f '{BashHelpers.Escape(tempFlagFile)}' ] && exit 1");
                         scriptLines.Add($"{cmd} && SUCC=$((SUCC+1)) || ERR=$((ERR+1))");
                     }
@@ -133,6 +152,7 @@ public static class BackupService
                         
                         if (proc.ExitCode == 0 && outStr.Contains("SUCCESS:"))
                         {
+                            int silentErrors = 0;
                             // Niezależnie od mniejszych zgrzytów wewnątrz skryptu powłoki dopisujemy wydelegowane ratunkowe pliki do manifestu
                             foreach (var item in sudoBackupTasks)
                             {
@@ -140,6 +160,31 @@ public static class BackupService
                                 string checkPath = Path.Combine(backupDir, relativePath);
                                 if (item.IsDirectory ? Directory.Exists(checkPath) : File.Exists(checkPath))
                                 {
+                                    if (item.IsDirectory)
+                                    {
+                                        try
+                                        {
+                                            bool backupHasFiles = Directory.EnumerateFileSystemEntries(checkPath).Any();
+                                            if (!backupHasFiles)
+                                            {
+                                                bool originalHasFiles = true; // domyślnie zakładamy, że oryginalny miał w środku pliki
+                                                try { originalHasFiles = Directory.EnumerateFileSystemEntries(item.Path).Any(); } catch { }
+                                                
+                                                if (originalHasFiles) 
+                                                {
+                                                    silentErrors++;
+                                                    continue; // Milczący drop TCC (brak plików w kopii)
+                                                }
+                                            }
+                                        }
+                                        catch 
+                                        { 
+                                            // Jeśli my w ogóle nie możemy odczytać utworzonej kopii z poziomu C#, to też uznajemy to za nieosiągalny błąd TCC
+                                            silentErrors++;
+                                            continue;
+                                        }
+                                    }
+                                    
                                     entries.Add(new BackupEntry
                                     {
                                         OriginalAbsolutePath = item.Path,
@@ -149,6 +194,10 @@ public static class BackupService
                                         SizeBytes            = item.SizeBytes
                                     });
                                 }
+                                else
+                                {
+                                    silentErrors++;
+                                }
                             }
 
                             int parsedErr = 0;
@@ -156,6 +205,7 @@ public static class BackupService
                             {
                                 if (outputLine.StartsWith("ERRORS:")) int.TryParse(outputLine.Substring(7), out parsedErr);
                             }
+                            parsedErr += silentErrors;
                             if (parsedErr > 0)
                             {
                                 errorsCount += parsedErr;
@@ -178,7 +228,9 @@ public static class BackupService
 
             if (errorsCount > 0)
             {
-                AppLogger.Log($"[backup] Uwaga: Manifest utworzony z brakami. Nieskopiowano {errorsCount} element(ów). Reszta dysku bezpieczna.");
+                string tccMsg = $"System macOS najprawdopodobniej zablokował uprawnienia skryptu Sudo do odczytu/zapisu dla {errorsCount} element(ów). Upewnij się, że nie zapisujesz backupu na Pulpicie, w Pobranych lub Dokumentach (blokada TCC). Wybierz inny folder i spróbuj ponownie.";
+                AppLogger.Log($"[backup] Uwaga: Manifest utworzony z brakami. {tccMsg}");
+                throw new Exception(tccMsg);
             }
 
             // Zapis manifestu
@@ -427,7 +479,7 @@ public static class BackupService
                                 errors += parsedErr;
                                 if (parsedErr > 0)
                                 {
-                                    errorMessages.Add($"Odtwarzanie Sudo częściowo zablokowane. Pomyślnie: {parsedOk}, Błędy: {parsedErr}");
+                                    errorMessages.Add($"Odtwarzanie zablokowane ({parsedErr} błędów). System macOS (TCC) zablokował skryptowi Sudo dostęp do Twojego folderu kopii (np. Pulpit/Dokumenty). Przenieś ten folder kopii np. do '/Users/Shared' i wskaż go ponownie z nowego miejsca.");
                                 }
                             }
                             else
